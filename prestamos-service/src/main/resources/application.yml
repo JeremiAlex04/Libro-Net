@@ -1,0 +1,23 @@
+#Configuracion y Conexión a la base de datos para el microservicio de préstamos
+server:
+  port: 8081 # Este microservicio corre en su propio puerto
+
+spring:
+  application:
+    name: libronet-prestamos
+  datasource:
+    url: jdbc:postgresql://localhost:5432/biblioteca_db
+    username: postgres
+    password: 200319
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update # Crea las tablas automáticamente
+    show-sql: true # Para ver en consola el SELECT FOR UPDATE
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+  instance:
+    prefer-ip-address: true

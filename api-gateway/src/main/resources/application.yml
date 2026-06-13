@@ -1,0 +1,34 @@
+# Configuracion al puerto 8080 (Donde apuntara a React) y le enseñamos la ruta al microservicio de Prestamos
+# Gateway le preguntara a Eureka en que IP esta funcionando el servicio de prestamos
+
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: libronet-api-gateway
+  cloud:
+    gateway:
+      routes:
+        # Regla para enrutar las peticiones de préstamos
+        - id: prestamos-service
+          uri: lb://libronet-prestamos
+          predicates:
+            - Path=/api/prestamos/**
+        # Agregando este bloque para permitir peticiones desde el frontend  
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "http://localhost:5173"
+            allowedMethods:
+              - GET
+              - POST
+            allowedHeaders: "*"
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+  instance:
+    prefer-ip-address: true
