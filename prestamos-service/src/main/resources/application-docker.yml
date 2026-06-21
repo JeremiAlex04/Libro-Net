@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://postgres:5432/biblioteca_db
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:200319}
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://eureka:8761/eureka/
+  instance:
+    prefer-ip-address: true

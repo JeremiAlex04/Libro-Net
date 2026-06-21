@@ -1,0 +1,117 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: libronet-postgres
+    environment:
+      POSTGRES_DB: biblioteca_db
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d biblioteca_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - libronet
+
+  eureka:
+    build: ./red
+    container_name: libronet-eureka
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8761/ > /dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - libronet
+
+  catalogo:
+    build: ./catalogo-service
+    container_name: libronet-catalogo
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka:
+        condition: service_healthy
+    networks:
+      - libronet
+
+  prestamos-norte:
+    build: ./prestamos-service
+    container_name: libronet-prestamos-norte
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka:
+        condition: service_healthy
+    networks:
+      - libronet
+
+  prestamos-sur:
+    build: ./prestamos-service
+    container_name: libronet-prestamos-sur
+    environment:
+      SPRING_PROFILES_ACTIVE: docker,sede-sur
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka:
+        condition: service_healthy
+    networks:
+      - libronet
+
+  gateway:
+    build: ./api-gateway
+    container_name: libronet-gateway
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8080:8080"
+    depends_on:
+      eureka:
+        condition: service_healthy
+      catalogo:
+        condition: service_started
+      prestamos-norte:
+        condition: service_started
+      prestamos-sur:
+        condition: service_started
+    networks:
+      - libronet
+
+  frontend:
+    build: ./_frontend-libronet
+    container_name: libronet-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - gateway
+    networks:
+      - libronet
+
+networks:
+  libronet:
+    driver: bridge
+
+volumes:
+  postgres_data:
