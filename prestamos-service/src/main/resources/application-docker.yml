@@ -10,3 +10,6 @@ eureka:
       defaultZone: http://eureka:8761/eureka/
   instance:
     prefer-ip-address: true
+
+reloj:
+  drift-ms: 5000

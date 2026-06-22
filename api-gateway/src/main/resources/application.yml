@@ -24,6 +24,13 @@ spring:
           uri: lb://libronet-prestamos
           predicates:
             - Path=/api/simulacion/**
+
+        # 4. Ruta para el Servicio de Autenticación
+        - id: auth-service
+          uri: lb://libronet-prestamos
+          predicates:
+            - Path=/api/auth/**
+            
             
       # Reglas de seguridad para permitir que React se comunique
       globalcors:
@@ -33,6 +40,8 @@ spring:
             allowedMethods:
               - GET
               - POST
+              - PUT
+              - DELETE
               - OPTIONS
             allowedHeaders: "*"
 

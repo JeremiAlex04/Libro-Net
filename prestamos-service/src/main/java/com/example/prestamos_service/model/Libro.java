@@ -9,7 +9,9 @@ public class Libro {
     @Id
     private UUID id;
     private String titulo;
-    private int copiasDisponibles;
+    private int copiasNorte;
+    private int copiasSur;
+    private String urlDigital;
 
     public Libro() {
     }
@@ -30,12 +32,28 @@ public class Libro {
         this.titulo = titulo;
     }
 
-    public int getCopiasDisponibles() {
-        return copiasDisponibles;
+    public int getCopiasNorte() {
+        return copiasNorte;
     }
 
-    public void setCopiasDisponibles(int copiasDisponibles) {
-        this.copiasDisponibles = copiasDisponibles;
+    public void setCopiasNorte(int copiasNorte) {
+        this.copiasNorte = copiasNorte;
+    }
+
+    public int getCopiasSur() {
+        return copiasSur;
+    }
+
+    public void setCopiasSur(int copiasSur) {
+        this.copiasSur = copiasSur;
+    }
+
+    public String getUrlDigital() {
+        return urlDigital;
+    }
+
+    public void setUrlDigital(String urlDigital) {
+        this.urlDigital = urlDigital;
     }
 
 }

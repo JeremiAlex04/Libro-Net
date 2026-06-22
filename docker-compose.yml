@@ -6,6 +6,7 @@ services:
       POSTGRES_DB: biblioteca_db
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+      TZ: America/Lima
     ports:
       - "5435:5432"
     volumes:
@@ -24,6 +25,7 @@ services:
     container_name: libronet-eureka
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      TZ: America/Lima
     ports:
       - "8761:8761"
     healthcheck:
@@ -42,6 +44,7 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+      TZ: America/Lima
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,6 +60,7 @@ services:
       SPRING_PROFILES_ACTIVE: docker
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+      TZ: America/Lima
     depends_on:
       postgres:
         condition: service_healthy
@@ -72,6 +76,7 @@ services:
       SPRING_PROFILES_ACTIVE: docker,sede-sur
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-200319}
+      TZ: America/Lima
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +90,7 @@ services:
     container_name: libronet-gateway
     environment:
       SPRING_PROFILES_ACTIVE: docker
+      TZ: America/Lima
     ports:
       - "8080:8080"
     depends_on:
@@ -102,6 +108,8 @@ services:
   frontend:
     build: ./_frontend-libronet
     container_name: libronet-frontend
+    environment:
+      TZ: America/Lima
     ports:
       - "5173:80"
     depends_on:

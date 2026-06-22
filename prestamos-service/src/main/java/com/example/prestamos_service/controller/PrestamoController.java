@@ -1,5 +1,7 @@
 package com.example.prestamos_service.controller;
 
+import com.example.prestamos_service.model.Prestamo;
+import com.example.prestamos_service.model.EstadoPrestamo;
 import com.example.prestamos_service.service.PrestamoService;
 
 import org.slf4j.Logger;
@@ -8,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -28,6 +31,7 @@ public class PrestamoController {
     @PostMapping("/{libroId}")
     public ResponseEntity<String> solicitarPrestamo(
             @PathVariable UUID libroId,
+            @RequestParam(value = "digital", required = false, defaultValue = "false") boolean digital,
             @RequestHeader(value = "X-Sede", required = false) String sede,
             @RequestHeader(value = "X-Bibliotecario", required = false) String bibliotecario) {
 
@@ -36,11 +40,11 @@ public class PrestamoController {
                 ? bibliotecario
                 : "Anónimo";
 
-        log.info("Préstamo solicitado | libro={} | bibliotecario={} | sede={} | nodo={}",
-                libroId, bibliotecarioAuditoria, sedeAuditoria, serverPort);
+        log.info("Préstamo solicitado | libro={} | digital={} | bibliotecario={} | sede={} | nodo={}",
+                libroId, digital, bibliotecarioAuditoria, sedeAuditoria, serverPort);
 
         try {
-            String resultado = prestamoService.procesarPrestamo(libroId);
+            String resultado = prestamoService.procesarPrestamo(libroId, sedeAuditoria, bibliotecarioAuditoria, digital);
             String respuesta = resultado
                     + " | Atendido en nodo " + serverPort
                     + " | Bibliotecario: " + bibliotecarioAuditoria
@@ -48,6 +52,24 @@ public class PrestamoController {
             return ResponseEntity.ok(respuesta);
         } catch (Exception e) {
             return ResponseEntity.status(503).body("Fallo de concurrencia o servicio: " + e.getMessage());
+        }
+    }
+
+    @GetMapping
+    public ResponseEntity<List<Prestamo>> obtenerTodosLosPrestamos() {
+        return ResponseEntity.ok(prestamoService.obtenerTodos());
+    }
+
+    @PutMapping("/{id}/estado")
+    public ResponseEntity<Prestamo> actualizarEstado(
+            @PathVariable UUID id,
+            @RequestParam EstadoPrestamo estado) {
+        log.info("Actualización de estado de logística | ID={} | Nuevo Estado={}", id, estado);
+        try {
+            Prestamo prestamo = prestamoService.actualizarEstado(id, estado);
+            return ResponseEntity.ok(prestamo);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().build();
         }
     }
 }
