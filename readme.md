@@ -1,86 +1,172 @@
-# LibroNet — Sistema Distribuido de Gestión Bibliotecaria
+# 📚 LibroNet — Sistema Distribuido de Gestión Bibliotecaria
 
-> **Semana 13 · Sistemas Distribuidos**  
-> Concurrencia y Exclusión Mutua aplicadas a un sistema de préstamos multi-sede en tiempo real.
+<div align="center">
 
-LibroNet es una arquitectura de microservicios que gestiona el inventario físico y digital de libros entre dos sedes bibliotecarias (**Sede Norte** y **Sede Sur**), operando bajo principios de **Exclusión Mutua**, **Algoritmo de Cristian** y **consistencia fuerte (CP del Teorema CAP)**.
+![Java](https://img.shields.io/badge/Java_17-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot_3-6DB33F?style=for-the-badge&logo=spring&logoColor=white)
+![React](https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16-316192?style=for-the-badge&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![Eureka](https://img.shields.io/badge/Netflix_Eureka-E50914?style=for-the-badge&logo=netflix&logoColor=white)
 
----
+**Sistema distribuido de préstamo y logística inter-bibliotecaria con exclusión mutua,  
+sincronización de relojes y balanceo de carga.**
 
-## Índice
-
-1. [Arquitectura General](#1-arquitectura-general)
-2. [Concurrencia y Exclusión Mutua](#2-concurrencia-y-exclusión-mutua)
-3. [Inventario por Sede y Copias Digitales](#3-inventario-por-sede-y-copias-digitales)
-4. [Sincronización de Tiempo — Algoritmo de Cristian](#4-sincronización-de-tiempo--algoritmo-de-cristian)
-5. [Interfaz del Bibliotecario](#5-interfaz-del-bibliotecario)
-6. [Flujo de Préstamo Interbibliotecario](#6-flujo-de-préstamo-interbibliotecario)
-7. [Escalamiento hacia N Sedes](#7-escalamiento-hacia-n-sedes)
-8. [Despliegue con Docker](#8-despliegue-con-docker)
-9. [Credenciales y Acceso](#9-credenciales-y-acceso)
-10. [Protocolo de Pruebas](#10-protocolo-de-pruebas)
-11. [Estructura del Proyecto](#11-estructura-del-proyecto)
+</div>
 
 ---
 
-## 1. Arquitectura General
+## 📋 Tabla de Contenidos
 
-```
-[ Cliente Web: React + Bootstrap 5 ]  ← http://localhost:5173
-              │
-              ▼  /api/*
-[ API Gateway: Spring Cloud Gateway ]  ← http://localhost:8080
-    │   (+ Servidor de Tiempo /api/time)
-    │                    ▲ Registro de servicios
-    ▼                    ▼
-[ Eureka Server ]  ← http://localhost:8761
-    │
-    ├──────────────────────────────────────┐
-    ▼                                      ▼
-[ catalogo-service ]            [ prestamos-service ]
-  Búsquedas (read-only)           Transacciones + Exclusión Mutua
-  Puerto: 8082                    Sede Norte: 8081
-                                  Sede Sur:   8083
-              │                              │
-              └──────────────┬───────────────┘
-                             ▼
-               [ PostgreSQL: biblioteca_db ]
-               Puerto: 5435 (host) / 5432 (interno)
-               TZ: America/Lima (UTC-5)
-```
-
-### Servicios registrados en Eureka
-
-| Nombre Eureka             | Rol                              | Puerto |
-|---------------------------|----------------------------------|--------|
-| `demo-eureka-server`      | Directorio de descubrimiento     | 8761   |
-| `libronet-api-gateway`    | Gateway + Servidor de tiempo     | 8080   |
-| `libronet-catalogo`       | Catálogo de libros (solo lectura)| 8082   |
-| `libronet-prestamos`      | Préstamos — Sede Norte           | 8081   |
-| `libronet-prestamos`      | Préstamos — Sede Sur             | 8083   |
+1. [Descripción del Sistema](#-descripción-del-sistema)
+2. [Escenario de Funcionamiento](#-escenario-de-funcionamiento)
+3. [Arquitectura General](#-arquitectura-general)
+4. [Componentes del Sistema](#-componentes-del-sistema)
+5. [Semana 13 — Exclusión Mutua: Algoritmo de Dekker](#-semana-13--exclusión-mutua-algoritmo-de-dekker)
+6. [Flujo Completo de un Préstamo](#-flujo-completo-de-un-préstamo)
+7. [Sincronización de Relojes — Algoritmo de Cristian](#-sincronización-de-relojes--algoritmo-de-cristian)
+8. [Logística Inter-Sedes](#-logística-inter-sedes)
+9. [Levantamiento del Sistema](#-levantamiento-del-sistema)
+10. [Endpoints de la API](#-endpoints-de-la-api)
 
 ---
 
-## 2. Concurrencia y Exclusión Mutua
+## 📖 Descripción del Sistema
 
-### La Sección Crítica
+**LibroNet** es un sistema distribuido de gestión bibliotecaria diseñado para coordinar el préstamo de libros entre dos sedes geográficamente separadas (**Sede Norte** y **Sede Sur**) sin un controlador central que genere un punto único de falla.
 
-La **Sección Crítica** de LibroNet es el bloque que modifica el inventario de un libro (`copias_norte` / `copias_sur`) y registra el préstamo en la base de datos. Sin control de concurrencia, dos sedes podrían prestar el mismo ejemplar físico simultáneamente.
+El sistema implementa conceptos fundamentales de **sistemas distribuidos**:
 
-**Escenario de riesgo sin exclusión mutua:**
+| Concepto | Implementación |
+|----------|---------------|
+| 🔒 Exclusión Mutua | Algoritmo de Dekker (Versión 5) con variables `volatile` compartidas |
+| 🕐 Sincronización de Relojes | Algoritmo de Cristian vía `GET /api/time` en el API Gateway |
+| ⚖️ Balanceo de Carga | Netflix Eureka + Spring Cloud Gateway (round-robin entre nodos) |
+| 🗄️ Consistencia de Datos | Transacciones ACID con bloqueo pesimista (`SELECT FOR UPDATE`) |
+| 🚚 Logística Distribuida | Estados de préstamo: `PENDIENTE_DE_ENVIO → EN_TRANSITO → ENTREGADO` |
+
+---
+
+## 🏛️ Escenario de Funcionamiento
+
+La biblioteca opera bajo el siguiente escenario real:
+
+> **Una red universitaria con dos sedes físicas** — Sede Norte y Sede Sur — que comparten un catálogo de libros unificado. Cada sede tiene su propio inventario de ejemplares físicos, pero ambas pueden realizar préstamos sobre el stock de la otra sede cuando el suyo está agotado.
+
+### Condiciones del escenario
 
 ```
-Tiempo   Nodo Norte (T1)           Nodo Sur (T2)
-──────   ────────────────────────  ────────────────────────
- t=0     Lee: copias_norte = 1     Lee: copias_norte = 1
- t=1     Evalúa: 1 > 0  ✓          Evalúa: 1 > 0  ✓
- t=2     Escribe: copias_norte = 0  Escribe: copias_norte = 0
-         ↑ ¡Ambas reclaman el mismo ejemplar! Stock corrupto.
+┌─────────────────────────────────────────────────────────────────┐
+│  RESTRICCIÓN PRINCIPAL: Solo UN préstamo puede procesarse       │
+│  a la vez sobre un mismo libro (recurso compartido crítico).    │
+│  Si ambas sedes solicitan el último ejemplar simultáneamente,   │
+│  el sistema DEBE garantizar que solo una lo obtenga.            │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### Implementación: Bloqueo Pesimista (`SELECT FOR UPDATE`)
+**Actores del sistema:**
+- 👤 **Bibliotecario** — Empleado autenticado por sede y rol
+- 📗 **Libro** — Recurso con stock separado por sede (`copiasNorte`, `copiasSur`) y enlace digital
+- 🏢 **Sede** — Nodo distribuido con su propia instancia del servicio de préstamos
+- 🌐 **Gateway** — Único punto de entrada externo; actúa también como servidor de tiempo de referencia
 
-La exclusión mutua se implementa en `PrestamoService.java` mediante `@Transactional` + `findByIdForUpdate()`:
+---
+
+## 🏗️ Arquitectura General
+
+```
+                         ┌─────────────────────────────────┐
+                         │         INTERNET / CLIENTE       │
+                         │    Frontend React (puerto 5173)  │
+                         └────────────────┬────────────────┘
+                                          │ HTTP
+                         ┌────────────────▼────────────────┐
+                         │         API GATEWAY              │
+                         │   Spring Cloud Gateway :8080     │
+                         │   ┌──────────────────────────┐  │
+                         │   │  /api/time  (Ref. Clock) │  │
+                         │   └──────────────────────────┘  │
+                         └──────┬────────────┬─────────────┘
+                                │            │
+              ┌─────────────────▼──┐   ┌─────▼──────────────┐
+              │  CATÁLOGO SERVICE  │   │  PRÉSTAMOS SERVICE  │
+              │  Spring Boot :808x │   │  (Load Balanced)    │
+              │  ┌──────────────┐  │   │  ┌───────────────┐  │
+              │  │ /api/catalogo│  │   │  │ Nodo NORTE    │  │
+              │  └──────────────┘  │   │  │ (puerto rand.)│  │
+              └─────────┬──────────┘   │  ├───────────────┤  │
+                        │              │  │ Nodo SUR      │  │
+              ┌─────────▼──────────┐   │  │ (puerto rand.)│  │
+              │  Netflix Eureka    │   │  └───────────────┘  │
+              │  Service Registry  │   └─────────┬───────────┘
+              │     :8761          │             │
+              └────────────────────┘   ┌─────────▼───────────┐
+                                       │    PostgreSQL :5435   │
+                                       │    biblioteca_db      │
+                                       │  ┌─────┐  ┌───────┐  │
+                                       │  │libro│  │presta-│  │
+                                       │  │     │  │  mo   │  │
+                                       │  └─────┘  └───────┘  │
+                                       └──────────────────────┘
+```
+
+---
+
+## 🧩 Componentes del Sistema
+
+### 1. `_frontend-libronet` — Interfaz de Usuario (React + Vite)
+
+Aplicación SPA construida con React 18. Implementa:
+- **Autenticación por sede**: Login de bibliotecario validado contra la base de datos; el acceso es restringido según sede y rol.
+- **Catálogo en tiempo real**: Búsqueda de libros con auto-polling cada 5 segundos para reflejar cambios concurrentes.
+- **Actualización optimista**: La UI descuenta el inventario visualmente de forma inmediata, con rollback si el servidor rechaza la operación.
+- **Panel de Logística**: Vista bifurcada (logística activa / historial) con gestión de estados inter-sedes.
+- **Modo Auditoría**: Revela los datos de sincronización de Cristian (Drift, RTT, hora corregida) por préstamo.
+
+### 2. `api-gateway` — Spring Cloud Gateway
+
+Punto de entrada único para todas las peticiones HTTP externas. Responsabilidades:
+- **Enrutamiento dinámico** hacia `catalogo-service` y `prestamos-service` vía Eureka.
+- **Balanceo de carga** automático entre los nodos `prestamos-norte` y `prestamos-sur` (round-robin).
+- **Servidor de Tiempo de Referencia** — Expone `GET /api/time` que retorna `serverTimeMs`, utilizado por cada nodo para ejecutar el Algoritmo de Cristian.
+
+### 3. `catalogo-service` — Catálogo de Libros
+
+Microservicio de solo lectura que expone el inventario centralizado de libros con búsqueda por título/autor.
+
+### 4. `prestamos-service` — Motor de Préstamos (×2 instancias)
+
+El servicio más crítico del sistema. Se despliega en **dos instancias simultáneas** (`prestamos-norte` y `prestamos-sur`), ambas registradas en Eureka. Responsabilidades:
+- Procesar solicitudes de préstamo con bloqueo transaccional pesimista.
+- Aplicar el **Algoritmo de Cristian** para corregir el timestamp de cada operación.
+- Proveer el endpoint de simulación del **Algoritmo de Dekker** para demostración de exclusión mutua.
+- Gestionar el ciclo de vida logístico de los préstamos inter-sedes.
+
+### 5. `red` — Netflix Eureka Server
+
+Registro de servicios (Service Registry). Todos los microservicios se registran aquí al arrancar; el Gateway consulta este registro para enrutar dinámicamente sin IPs hardcodeadas.
+
+### 6. PostgreSQL — Base de Datos Compartida
+
+Base de datos relacional única compartida por todas las instancias. Las tablas principales son:
+
+| Tabla | Descripción |
+|-------|-------------|
+| `libro` | Inventario con `copias_norte` y `copias_sur` separadas por sede |
+| `prestamo` | Registro auditable de cada transacción con timestamps de Cristian |
+| `bibliotecario` | Usuarios del sistema con sede y rol asociados |
+
+---
+
+## 🔒 Semana 13 — Exclusión Mutua: Algoritmo de Dekker
+
+### Contexto del Problema
+
+Cuando **dos sedes solicitan simultáneamente el último ejemplar físico** de un libro, se produce una condición de carrera (*race condition*) sobre el inventario. Sin un mecanismo de exclusión mutua, ambas podrían leer `stock = 1`, ambas decrementarlo, y terminar con `stock = -1` — una inconsistencia crítica.
+
+### Solución Implementada en el Sistema Real
+
+El sistema utiliza **bloqueo pesimista a nivel de base de datos** (`SELECT FOR UPDATE` vía `@Lock(PESSIMISTIC_WRITE)` en el repositorio JPA). Esto garantiza que solo una transacción pueda leer y modificar el inventario de un libro a la vez a nivel de producción.
 
 ```java
 // LibroRepository.java
@@ -89,401 +175,340 @@ La exclusión mutua se implementa en `PrestamoService.java` mediante `@Transacti
 Optional<Libro> findByIdForUpdate(@Param("id") UUID id);
 ```
 
+### Simulación Didáctica — Algoritmo de Dekker (Versión 5)
+
+Se implementó adicionalmente un endpoint de simulación que demuestra el **Algoritmo de Dekker V5** con dos hilos concurrentes, modelando exactamente el escenario de las dos sedes:
+
+**Variables compartidas (en memoria):**
+
 ```java
-// PrestamoService.java
-@Transactional
-public String procesarPrestamo(UUID libroId, String sede,
-                                String bibliotecario, boolean digital) {
-    // ── INICIO SECCIÓN CRÍTICA ──────────────────────────────
-    Libro libro = libroRepository.findByIdForUpdate(libroId)
-            .orElseThrow(() -> new RuntimeException("Libro no encontrado"));
-
-    // Evaluación del recurso compartido bajo bloqueo exclusivo
-    boolean isNorte  = sede.equalsIgnoreCase("Sede Norte");
-    int localStock   = isNorte ? libro.getCopiasNorte() : libro.getCopiasSur();
-    int otherStock   = isNorte ? libro.getCopiasSur()   : libro.getCopiasNorte();
-
-    if (localStock > 0) {
-        // Préstamo local — decrementa stock de la sede actual
-        if (isNorte) libro.setCopiasNorte(libro.getCopiasNorte() - 1);
-        else         libro.setCopiasSur(libro.getCopiasSur() - 1);
-        estadoFinal = EstadoPrestamo.ENTREGADO;
-    } else if (otherStock > 0) {
-        // Interbibliotecario — decrementa stock de la otra sede
-        if (isNorte) libro.setCopiasSur(libro.getCopiasSur() - 1);
-        else         libro.setCopiasNorte(libro.getCopiasNorte() - 1);
-        estadoFinal = EstadoPrestamo.PENDIENTE_DE_ENVIO;
-    } else {
-        throw new RuntimeException("Sin stock físico disponible.");
-    }
-    libroRepository.save(libro);
-    // ── FIN SECCIÓN CRÍTICA (COMMIT libera el bloqueo) ──────
-}
+private volatile boolean quiereEntrarSedeNorte = false;  // Bandera de intención Norte
+private volatile boolean quiereEntrarSedeSur   = false;  // Bandera de intención Sur
+private volatile int     turno = 1;                       // 1=Norte tiene prioridad, 2=Sur
+private volatile int     inventarioSimulado = 1;          // El recurso compartido crítico
 ```
 
-### Equivalencia con el Algoritmo de Dekker V5
+> La palabra clave `volatile` garantiza **visibilidad** entre hilos en la JVM: ningún hilo puede cachear el valor localmente; siempre lee desde la memoria principal.
 
-El bloqueo pesimista de PostgreSQL implementa los mismos principios que Dekker V5:
-
-| Dekker V5 (Conceptual)           | Implementación en LibroNet               |
-|----------------------------------|------------------------------------------|
-| `flag[i] = true` (intención)     | `BEGIN TRANSACTION`                      |
-| Espera activa si `flag[j] = true`| `SELECT FOR UPDATE` (PostgreSQL suspende)|
-| Variable `turn` rompe empates    | Cola FIFO interna de PostgreSQL          |
-| Sección Crítica                  | Lectura + Modificación del inventario    |
-| `flag[i] = false` (liberación)   | `COMMIT`                                 |
-
-**¿Por qué Dekker V5 y no versiones anteriores?**
-
-| Versión | Fallo                    | Consecuencia en LibroNet                      |
-|---------|--------------------------|-----------------------------------------------|
-| V1      | Alternancia estricta     | Norte espera a Sur aunque el libro esté libre |
-| V2      | Interbloqueo             | Ambas sedes quedan bloqueadas mutuamente      |
-| V3      | Postergación indefinida  | Una sede espera eternamente                   |
-| V4      | Condición de carrera     | Dos sedes creen tener acceso simultáneo       |
-| **V5**  | **Sin deficiencias**     | Combina banderas + variable de turno          |
-
----
-
-## 3. Inventario por Sede y Copias Digitales
-
-### Esquema de Base de Datos
-
-```sql
-CREATE TABLE libro (
-    id           UUID PRIMARY KEY,
-    titulo       VARCHAR(255),
-    copias_norte INT NOT NULL DEFAULT 0,   -- Stock físico en Sede Norte
-    copias_sur   INT NOT NULL DEFAULT 0,   -- Stock físico en Sede Sur
-    url_digital  VARCHAR(500)              -- Enlace a E-Book (opcional)
-);
-```
-
-### Libros Sembrados
-
-| Título                        | Norte | Sur | Digital |
-|-------------------------------|-------|-----|---------|
-| El Arte de la Escalabilidad   |   2   |  1  |   ✅    |
-| Sistemas Distribuidos         |   0   |  2  |   ✅    |
-| Tradiciones Peruanas          |   3   |  2  |   ✅    |
-| La Ciudad y los Perros        |   4   |  3  |   ✅    |
-| Conversación en La Catedral   |   2   |  2  |   ✅    |
-| El Sexto                      |   3   |  1  |   ✅    |
-| Yawar Fiesta                  |   2   |  4  |   ✅    |
-| Los Ríos Profundos            |   5   |  2  |   ✅    |
-| Redoble por Rancas            |   1   |  3  |   ✅    |
-| País de Jauja                 |   2   |  2  |   ✅    |
-| No me Esperen en Abril        |   4   |  1  |   ✅    |
-| La Palabra del Mudo           |   3   |  3  |   ✅    |
-
-### Lógica de Decisión de Préstamo
+### Diagrama del Algoritmo de Dekker V5
 
 ```
-¿Préstamo Digital?
-  └─ SÍ → Aprobado inmediatamente (ENTREGADO). Sin afectar stock físico.
-  └─ NO → Evalúa stock de la sede solicitante:
-        ├─ localStock > 0  → ENTREGADO (préstamo local inmediato)
-        ├─ localStock = 0 y otherStock > 0 → PENDIENTE_DE_ENVIO (interbibliotecario)
-        └─ Ambos = 0 → Rechazado ("Sin stock físico disponible")
+  HILO SEDE NORTE                          HILO SEDE SUR
+  ─────────────────                        ──────────────────
+  quiereEntrar = true                      quiereEntrar = true
+        │                                        │
+        ▼                                        ▼
+  ¿quiereSur == true?──NO──┐         ┌──NO──¿quiereNorte == true?
+        │YES                │         │          │YES
+        ▼                   │         │          ▼
+  ¿turno == 2?──NO──esperar │         │  esperar──NO──¿turno == 1?
+        │YES                │         │                    │YES
+        ▼                   │         │                    ▼
+  quiereNorte = false       │         │         quiereSur = false
+        │                   │         │                    │
+  espera (turno≠2)          │         │         espera (turno≠1)
+        │                   │         │                    │
+  quiereNorte = true        │         │         quiereSur = true
+        │                   │         │                    │
+        └───────────────────┘         └────────────────────┘
+                  │                                │
+                  ▼                                ▼
+         ╔═══════════════╗               ╔════════════════╗
+         ║  SECCIÓN      ║               ║  SECCIÓN       ║
+         ║  CRÍTICA      ║   (solo uno   ║  CRÍTICA       ║
+         ║  NORTE        ║   a la vez)   ║  SUR           ║
+         ╚═══════════════╝               ╚════════════════╝
+                  │                                │
+                  ▼                                ▼
+         turno = 2                        turno = 1
+         quiereNorte = false              quiereSur = false
 ```
 
----
+### Propiedades Garantizadas
 
-## 4. Sincronización de Tiempo — Algoritmo de Cristian
+| Propiedad | Descripción | ¿Cumple? |
+|-----------|-------------|----------|
+| **Exclusión Mutua** | Nunca dos procesos en la sección crítica simultáneamente | ✅ |
+| **Ausencia de Deadlock** | El sistema nunca queda bloqueado permanentemente | ✅ |
+| **Ausencia de Starvation** | Ningún proceso espera indefinidamente gracias al turno | ✅ |
+| **Sin Espera Activa Desenfrenada** | Cede el turno antes de re-intentar | ✅ |
 
-Antes de registrar cada préstamo, el nodo de préstamos sincroniza su reloj con el API Gateway:
-
-```
-Nodo Préstamos                     API Gateway (/api/time)
-──────────────────                 ──────────────────────
-t₀ = reloj_local + drift
-        ─── GET /api/time ────────────────────────────►
-                                   { serverTimeMs: T_srv }
-        ◄── T_srv ───────────────────────────────────
-t₁ = reloj_local + drift
-
-RTT          = t₁ - t₀
-T_corregido  = T_srv + (RTT / 2)
-
-fechaSolicitud = LocalDateTime.ofInstant(
-    Instant.ofEpochMilli(T_corregido),
-    ZoneId.of("America/Lima")          // UTC-5
-)
-```
-
-Cada registro de préstamo almacena:
-
-| Campo            | Descripción                                        |
-|------------------|----------------------------------------------------|
-| `fecha_solicitud`| Hora corregida por Cristian (referencia oficial)   |
-| `fecha_local_sede`| Hora del reloj local de la sede antes de corregir|
-| `reloj_drift_ms` | Desfase configurado del nodo (en ms)               |
-| `reloj_rtt_ms`   | Round-Trip Time de la consulta al servidor de tiempo|
-
-> El **Modo Auditoría** en la interfaz expone estos datos técnicos por préstamo mediante un panel expandible `[+ Ver Sync]`.
-
----
-
-## 5. Interfaz del Bibliotecario
-
-### Login
-
-El sistema autentica al bibliotecario verificando `username + password + sede` contra la tabla `bibliotecario`. Una combinación incorrecta de sede impide el acceso aunque las credenciales sean válidas.
-
-### Catálogo de Libros
-
-Cada tarjeta de libro muestra:
-- **Badge verde** `Local (N)`: copias disponibles en la sede actual.
-- **Badge azul/rojo** `Sede Sur/Norte (N)`: copias en la otra sede.
-- Botones de acción condicionales según disponibilidad (ver sección 6).
-
-### Panel de Logística (pestañas)
-
-| Pestaña               | Contenido                                                       |
-|-----------------------|-----------------------------------------------------------------|
-| **Logística Activa**  | Envíos interbibliotecarios pendientes filtrados por sede activa |
-| **Historial de Préstamos** | Todos los préstamos completados (`ENTREGADO`)            |
-
-**Roles de cada sede en Logística Activa:**
-
-| Estado del Envío        | Vista Sede Solicitante        | Vista Sede Origen              |
-|-------------------------|-------------------------------|--------------------------------|
-| `PENDIENTE_DE_ENVIO`    | "Entrante (Espera)"           | "Saliente (Despachar)" + botón |
-| `EN_TRANSITO`           | "Entrante (Recibir)" + botón  | "Saliente (En camino)"         |
-| `ENTREGADO`             | Aparece en Historial          | Aparece en Historial           |
-
----
-
-## 6. Flujo de Préstamo Interbibliotecario
-
-El proceso implementa un flujo de **dos fases** para evitar reservas accidentales sobre el stock de otra sede:
-
-### Fase 1 — Consulta de disponibilidad (sin transacción)
-```
-Bibliotecario Norte ve: "Sistemas Distribuidos — Local (0) | Sede Sur (2)"
-→ Clic en: [ 🔍 Consultar Disponibilidad en Sede Sur ]
-→ Se expande panel informativo:
-   "📦 Sede Sur tiene 2 copias disponibles para envío físico.
-    Al confirmar, se reservará una copia y quedará pendiente de despacho."
-```
-
-### Fase 2 — Confirmación y transacción
-```
-→ Clic en: [ 🚚 Confirmar Envío desde Sede Sur ]
-→ POST /api/prestamos/{id}?digital=false  (X-Sede: Sede Norte)
-→ Sección Crítica ejecutada: copias_sur - 1, estado = PENDIENTE_DE_ENVIO
-→ Aparece en Logística Activa de ambas sedes
-```
-
-### Diagrama de Secuencia Completo
-
-```
-Bibliot.Norte   Frontend   Gateway   Nodo Prestamos   PostgreSQL   Bibliot.Sur
-     │              │          │            │               │            │
-     │─Clic Fase 1─►│          │            │               │            │
-     │◄─Panel info──│          │            │               │            │
-     │─Clic Fase 2─►│          │            │               │            │
-     │              │─POST────►│            │               │            │
-     │              │          │─enruta────►│               │            │
-     │              │          │            │─BEGIN TX──────►            │
-     │              │          │            │─SELECT FOR UPD►            │
-     │              │          │            │◄─fila bloqueada─           │
-     │              │          │            │─UPDATE copias──►            │
-     │              │          │            │─INSERT prestamo►            │
-     │              │          │            │─COMMIT (unlock)►            │
-     │              │◄─200 OK──│◄──────────►│               │            │
-     │◄─Alerta éxito─│          │            │               │            │
-     │              │          │            │               │            │
-     │              │          │            │          (polling 5s)       │
-     │              │          │            │               │─Ver Logíst.►│
-     │              │          │            │               │◄─"Despachar"│
-     │              │          │            │               │─PUT EN_TRANS►
-     │◄─Ver "Recibir"─          │            │               │            │
-     │─Clic Entregar►           │─PUT ENTREGADO──────────────►            │
-```
-
----
-
-## 7. Escalamiento hacia N Sedes
-
-### Opción A: Token Ring (redes estables)
-
-Una sede solo puede escribir en la base de datos cuando posee el **token**. El token circula en anillo entre todas las sedes.
-
-```
-Sede Norte ──token──► Sede Sur ──token──► Sede Este ──token──► Sede Oeste ──┐
-     ▲                                                                        │
-     └────────────────────────────────────────────────────────────────────────┘
-```
-
-- **Ventaja:** Libre de interbloqueos por diseño.
-- **Requerimiento:** Protocolo de recuperación si el nodo con el token falla.
-
-### Opción B: Basado en Permisos (Ricart-Agrawala)
-
-La sede solicitante debe obtener permiso de **todas** las demás antes de entrar a la Sección Crítica.
-
-- **Mensajes requeridos:** `2(N-1)` por operación.
-- **Ventaja:** No requiere coordinador central.
-- **Consideración:** A mayor N, mayor tráfico de red.
-
-### Comparativa
-
-| Estrategia              | Mensajes/op.  | Tolerancia a fallos | Caso de uso              |
-|-------------------------|---------------|---------------------|--------------------------|
-| `SELECT FOR UPDATE`     | 0 (DB local)  | Alta (Postgres HA)  | 2–5 sedes, 1 DB central  |
-| Token Ring              | 1             | Media               | 5–20 sedes, red estable  |
-| Ricart-Agrawala         | 2(N-1)        | Alta                | +20 sedes, red dinámica  |
-
----
-
-## 8. Despliegue con Docker
-
-### Requisitos
-
-- Docker Desktop (o Docker Engine + Compose v2)
-
-### Arranque rápido
+### Cómo Probar la Simulación
 
 ```bash
-# Construir y levantar todos los servicios
-docker compose up -d --build
-
-# Ver logs en tiempo real
-docker compose logs -f gateway
-
-# Detener y eliminar contenedores (preserva datos)
-docker compose down
-
-# Detener y borrar volumen (reinicia base de datos y libros)
-docker compose down -v
+# Invoca el endpoint de simulación de Dekker
+GET http://localhost:8080/api/simulacion/dekker
 ```
 
-### URLs expuestas
+**Respuesta esperada:**
+```json
+[
+  "[SISTEMA] Iniciando Simulación: Algoritmo de Dekker (Versión 5) para 2 procesos.",
+  "[SEDE NORTE] Iniciando intento de préstamo...",
+  "[SEDE SUR] Iniciando intento de préstamo...",
+  "[SEDE NORTE] Entró a la Sección Crítica (Exclusión Mutua garantizada).",
+  "[SEDE NORTE] Préstamo exitoso. Inventario restante: 0",
+  "[SEDE NORTE] Salió de la Sección Crítica y cedió el turno.",
+  "[SEDE SUR] Entró a la Sección Crítica (Exclusión Mutua garantizada).",
+  "[SEDE SUR] Fallo: Inventario agotado.",
+  "[SEDE SUR] Salió de la Sección Crítica y cedió el turno.",
+  "[SISTEMA] Simulación finalizada. Ningún proceso bloqueó al otro de forma permanente."
+]
+```
 
-| Servicio   | URL                       | Credenciales             |
-|------------|---------------------------|--------------------------|
-| Frontend   | http://localhost:5173     | Ver sección 9            |
-| Gateway    | http://localhost:8080     | —                        |
-| Eureka     | http://localhost:8761     | —                        |
-| PostgreSQL | localhost:**5435**        | postgres / 200319        |
+> Solo **una** sede obtiene el libro. La otra entra a la sección crítica pero encuentra el inventario en 0 — sin inconsistencia ni corrupción de datos.
 
-> **Nota:** PostgreSQL se expone en el puerto `5435` del host (no `5432`) para evitar conflictos con instalaciones locales.
+---
 
-### Variables de entorno (opcional)
+## 🔄 Flujo Completo de un Préstamo
+
+El siguiente diagrama describe el recorrido completo desde que el bibliotecario hace clic en "Solicitar Préstamo" hasta que el libro es entregado:
+
+```
+FRONTEND (React)          API GATEWAY           PRESTAMOS-SERVICE        PostgreSQL
+─────────────────        ─────────────         ──────────────────        ──────────
+     │                        │                        │                      │
+     │ POST /api/prestamos     │                        │                      │
+     │ /{libroId}?digital=X   │                        │                      │
+     │  Headers:              │                        │                      │
+     │   X-Sede: "Sede Norte" │                        │                      │
+     │   X-Bibliotecario: ... │                        │                      │
+     ├───────────────────────►│                        │                      │
+     │                        │  Enrutamiento          │                      │
+     │                        │  (round-robin Eureka)  │                      │
+     │                        ├───────────────────────►│                      │
+     │                        │                        │                      │
+     │                        │                        │ SELECT * FROM libro  │
+     │                        │                        │ WHERE id=?           │
+     │                        │                        │ FOR UPDATE           │
+     │                        │                        ├─────────────────────►│
+     │                        │                        │◄─────────────────────┤
+     │                        │                        │  (bloqueo adquirido) │
+     │                        │                        │                      │
+     │                        │           ┌────────────┴───────────┐         │
+     │                        │           │   DECISIÓN DE STOCK    │         │
+     │                        │           │                        │         │
+     │                        │           │ ¿digital?              │         │
+     │                        │           │   └─► ENTREGADO        │         │
+     │                        │           │       (link digital)   │         │
+     │                        │           │                        │         │
+     │                        │           │ ¿stock local > 0?      │         │
+     │                        │           │   └─► ENTREGADO local  │         │
+     │                        │           │                        │         │
+     │                        │           │ ¿stock otra sede > 0?  │         │
+     │                        │           │   └─► PENDIENTE_ENVIO  │         │
+     │                        │           │       (logística inter)│         │
+     │                        │           │                        │         │
+     │                        │           │ ¿sin stock?            │         │
+     │                        │           │   └─► Error 503        │         │
+     │                        │           └────────────┬───────────┘         │
+     │                        │                        │                      │
+     │                        │                        │ GET /api/time        │
+     │                        │                        │ (Algoritmo Cristian) │
+     │                        │◄───────────────────────┤                      │
+     │                        ├───────────────────────►│                      │
+     │                        │  serverTimeMs           │                      │
+     │                        │                        │ Calcula:             │
+     │                        │                        │  RTT = T1 - T0       │
+     │                        │                        │  T_corregido =       │
+     │                        │                        │  serverTime + RTT/2  │
+     │                        │                        │                      │
+     │                        │                        │ INSERT INTO prestamo │
+     │                        │                        │ (con timestamp       │
+     │                        │                        │  corregido)          │
+     │                        │                        ├─────────────────────►│
+     │                        │                        │◄─────────────────────┤
+     │                        │                        │  (bloqueo liberado)  │
+     │◄───────────────────────┤◄───────────────────────┤                      │
+     │  200 OK: "Préstamo     │                        │                      │
+     │  aprobado..."          │                        │                      │
+```
+
+### Estados del Ciclo de Vida de un Préstamo Inter-Sedes
+
+```
+                    ┌─────────────────────────────────────────────────┐
+                    │           LIBRO SOLICITADO                       │
+                    │     (stock local agotado, hay stock en otra sede)│
+                    └─────────────────────┬───────────────────────────┘
+                                          │
+                                          ▼
+                              ┌──────────────────────┐
+                              │  PENDIENTE_DE_ENVIO   │
+                              │  Acción: Sede origen  │
+                              │  debe "Despachar"     │
+                              └──────────┬───────────┘
+                                         │ Bibliotecario de Sede Origen
+                                         │ hace clic en "Despachar Envío"
+                                         ▼
+                              ┌──────────────────────┐
+                              │     EN_TRANSITO       │
+                              │  El libro está en     │
+                              │  camino físicamente   │
+                              └──────────┬───────────┘
+                                         │ Bibliotecario de Sede Destino
+                                         │ hace clic en "Entregar al Lector"
+                                         ▼
+                              ┌──────────────────────┐
+                              │      ENTREGADO        │
+                              │  Transacción cerrada  │
+                              │  Pasa a historial     │
+                              └──────────────────────┘
+```
+
+---
+
+## 🕐 Sincronización de Relojes — Algoritmo de Cristian
+
+En un sistema distribuido, cada nodo tiene su propio reloj físico que puede **derivar (drift)** con respecto al tiempo real. Si los préstamos se registran con timestamps incorrectos, el historial queda inconsistente.
+
+### Implementación
+
+Cada vez que se procesa un préstamo, el nodo ejecuta el **Algoritmo de Cristian**:
+
+```
+         NODO SEDE               API GATEWAY (Servidor de Tiempo)
+         ─────────               ────────────────────────────────
+              │                               │
+    T0 = System.currentTimeMillis() + drift   │
+              │                               │
+              │──── GET /api/time ───────────►│
+              │                               │
+              │◄─── { serverTimeMs: T_s } ────│
+              │                               │
+    T1 = System.currentTimeMillis() + drift   │
+              │                               │
+    RTT = T1 - T0                             │
+    T_corregido = T_s + (RTT / 2)             │
+              │                               │
+    Guarda en BD:                             │
+      fechaSolicitud  = T_corregido  ← tiempo de referencia global
+      fechaLocalSede  = T0           ← tiempo local de la sede (con drift)
+      relojDriftMs    = drift configurado
+      relojRttMs      = RTT medido
+```
+
+> La corrección `T_s + RTT/2` asume que el mensaje de respuesta tardó exactamente la mitad del viaje de ida y vuelta — compensando el desfase del reloj local.
+
+### Variables de Configuración de Drift
+
+En `docker-compose.yml`, la Sede Sur puede tener un drift simulado para pruebas:
+
+```yaml
+# prestamos-sur
+environment:
+  SPRING_PROFILES_ACTIVE: docker,sede-sur
+  # En application-sede-sur.yml puede definirse: reloj.drift-ms: 3000
+```
+
+---
+
+## 🚚 Logística Inter-Sedes
+
+```
+   SEDE NORTE                     SEDE SUR
+   ──────────                     ─────────
+   Solicita libro                       │
+   (stock local = 0)                    │
+   stock Sur > 0 ──────────────────────►│
+   Estado: PENDIENTE_DE_ENVIO           │
+              │                         │
+              │        Bibliotecario Sur│
+              │        ve tarea en panel│
+              │        "Saliente (Despachar)"
+              │                         │
+              │        Clic "Despachar" │
+              │◄────────────────────────┤
+   Estado: EN_TRANSITO                  │
+              │                         │
+   Bibliotecario Norte                  │
+   ve "Entrante (Recibir)"              │
+   Clic "Entregar al Lector"            │
+              │                         │
+   Estado: ENTREGADO                    │
+   Mueve a Historial                    │
+```
+
+---
+
+## 🚀 Levantamiento del Sistema
+
+### Pre-requisitos
+
+- Docker Desktop instalado y en ejecución
+- Git
+
+### Pasos
 
 ```bash
+# 1. Clonar el repositorio
+git clone https://github.com/JeremiAlex04/Libro-Net.git
+cd Libro-Net
+
+# 2. Copiar variables de entorno
 cp .env.example .env
-# Editar POSTGRES_USER y POSTGRES_PASSWORD según sea necesario
+
+# 3. Levantar todos los servicios
+docker-compose up --build -d
+
+# 4. Verificar que todos los servicios están corriendo
+docker-compose ps
 ```
 
-### Zona Horaria
+### Verificación de Salud
 
-Todos los servicios operan en `TZ=America/Lima` (UTC-5). Las fechas de préstamo se almacenan y muestran en hora peruana.
+| Servicio | URL | Descripción |
+|----------|-----|-------------|
+| Frontend | http://localhost:5173 | Interfaz de usuario |
+| API Gateway | http://localhost:8080 | Punto de entrada REST |
+| Eureka Dashboard | http://localhost:8761 | Panel de registro de servicios |
+| PostgreSQL | localhost:5435 | Base de datos |
 
----
-
-## 9. Credenciales y Acceso
-
-| Sede        | Usuario       | Contraseña | Rol           |
-|-------------|---------------|------------|---------------|
-| Sede Norte  | `admin_norte` | `norte123` | Bibliotecario |
-| Sede Sur    | `admin_sur`   | `sur123`   | Bibliotecario |
-
-> El sistema valida que el usuario pertenezca a la sede seleccionada en el login. Un `admin_norte` no puede iniciar sesión eligiendo "Sede Sur".
-
----
-
-## 10. Protocolo de Pruebas
-
-### Prueba A: Exclusión Mutua
-
-1. Asegúrate de que un libro tenga exactamente **1 copia** en Sede Norte.
-2. Abre dos pestañas del navegador, ambas con sesión de `admin_norte`.
-3. Solicita el préstamo en ambas pestañas al mismo tiempo.
-4. **Resultado esperado:** una transacción obtiene `ENTREGADO`; la otra recibe `"Sin stock físico disponible"`. El stock queda en 0, no en -1.
-
-### Prueba B: Flujo Interbibliotecario Completo
-
-1. Login como `admin_norte` → "Sistemas Distribuidos" tiene Local (0), Sede Sur (2).
-2. Clic **"Consultar Disponibilidad en Sede Sur"** → aparece el panel informativo.
-3. Clic **"Confirmar Envío desde Sede Sur"** → estado `PENDIENTE_DE_ENVIO` en Logística Activa de Norte ("Entrante — Espera").
-4. Login como `admin_sur` → aparece "Saliente (Despachar)" → clic **"Despachar Envío"** → `EN_TRANSITO`.
-5. Login como `admin_norte` → aparece "Entrante (Recibir)" → clic **"Entregar al Lector"** → `ENTREGADO`.
-
-### Prueba C: Préstamo Digital
-
-1. Para cualquier libro, clic en **"Derivar Copia Digital (E-Book)"**.
-2. **Resultado esperado:** transacción `ENTREGADO` inmediata. El stock físico (`copias_norte` y `copias_sur`) permanece sin cambios.
-
-### Prueba D: Modo Auditoría (Cristian Sync)
-
-1. Activa el toggle **"Modo Auditoría"** en la barra de navegación.
-2. En la pestaña "Historial de Préstamos", aparece el enlace `[+ Ver Sync]` en cada fila.
-3. Al hacer clic, se despliega: hora corregida por Cristian, hora local de la sede, Drift (ms) y RTT (ms).
-
-### Prueba E: Tolerancia a Fallos
-
-1. Detén el contenedor de préstamos: `docker stop libronet-prestamos-norte`.
-2. Intenta un préstamo desde la interfaz.
-3. **Resultado esperado:** alerta `"Error Crítico: El servicio central no responde"` sin colapsar la UI. El Gateway intenta el nodo Sur como fallback.
-
----
-
-## 11. Estructura del Proyecto
+### Orden de Arranque
 
 ```
-bibliotecaDistribuido/
-├── docker-compose.yml                     # Orquestación de todos los servicios
-├── docker/
-│   └── postgres/
-│       └── init.sql                       # Esquema + datos semilla (12 libros)
-│
-├── red/                                   # Servidor Eureka (descubrimiento)
-├── api-gateway/                           # Spring Cloud Gateway + /api/time
-│   └── src/.../TimeController.java        # Servidor de referencia temporal (Cristian)
-│
-├── catalogo-service/                      # Búsqueda de libros (read-only)
-│   └── src/.../model/Libro.java           # Entidad: copiasNorte, copiasSur, urlDigital
-│
-├── prestamos-service/                     # Motor de préstamos + Exclusión Mutua
-│   └── src/.../
-│       ├── model/
-│       │   ├── Libro.java                 # Entidad con inventario por sede
-│       │   ├── Prestamo.java              # Registro de préstamo (+ campos Cristian)
-│       │   └── EstadoPrestamo.java        # ENTREGADO | PENDIENTE_DE_ENVIO | EN_TRANSITO
-│       ├── repository/
-│       │   └── LibroRepository.java       # findByIdForUpdate() → SELECT FOR UPDATE
-│       ├── service/
-│       │   └── PrestamoService.java       # Sección Crítica + Algoritmo de Cristian
-│       └── controller/
-│           └── PrestamoController.java    # POST /{id}?digital= | PUT /{id}/estado
-│
-└── _frontend-libronet/                    # Cliente React + Vite + Bootstrap 5
-    └── src/
-        ├── App.jsx                        # Estado global + pestañas logística/historial
-        └── components/
-            ├── Login.jsx                  # Autenticación por sede
-            ├── Navbar.jsx                 # Toggle Modo Auditoría
-            └── BookCard.jsx               # Flujo 2 fases (consulta → confirmación)
+PostgreSQL ──► Eureka ──► Catálogo & Préstamos ──► Gateway ──► Frontend
 ```
 
----
-
-## Referencias Técnicas
-
-| Tecnología              | Versión  | Rol en el sistema                    |
-|-------------------------|----------|--------------------------------------|
-| Java Spring Boot        | 3.x      | Backend de microservicios            |
-| Spring Data JPA         | 3.x      | ORM + `@Lock(PESSIMISTIC_WRITE)`     |
-| Spring Cloud Gateway    | 4.x      | Enrutamiento + balanceo de carga     |
-| Netflix Eureka          | —        | Descubrimiento de servicios          |
-| PostgreSQL              | 16       | Base de datos centralizada (CP)      |
-| React + Vite            | 18 / 8   | Interfaz SPA del bibliotecario       |
-| Bootstrap 5             | 5.3      | Estilos e iconografía (`bi-*`)       |
-| Docker Compose          | v2       | Orquestación del stack completo      |
+> Los servicios tienen healthchecks configurados en `docker-compose.yml` para garantizar este orden.
 
 ---
 
-*Proyecto académico — Semana 13: Concurrencia y Exclusión Mutua*  
-*Repositorio: `JeremiAlex04/Libro-Net`*
+## 🛠️ Endpoints de la API
+
+Todos los endpoints son accesibles a través del API Gateway en `http://localhost:8080`.
+
+### Autenticación
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `POST` | `/api/auth/login` | Login de bibliotecario |
+
+### Catálogo
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/catalogo/buscar?query={término}` | Buscar libros en el catálogo |
+
+### Préstamos
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `POST` | `/api/prestamos/{libroId}?digital={bool}` | Solicitar préstamo (headers: `X-Sede`, `X-Bibliotecario`) |
+| `GET` | `/api/prestamos` | Listar todos los préstamos |
+| `PUT` | `/api/prestamos/{id}/estado?estado={estado}` | Actualizar estado logístico |
+
+### Simulación & Utilidades
+| Método | Endpoint | Descripción |
+|--------|----------|-------------|
+| `GET` | `/api/simulacion/dekker` | Ejecutar simulación del Algoritmo de Dekker V5 |
+| `GET` | `/api/time` | Obtener tiempo de referencia del servidor (Algoritmo de Cristian) |
+
+---
+
+## 👥 Equipo
+
+Proyecto desarrollado para el curso de **Sistemas Distribuidos** — Semana 13: Exclusión Mutua.
+
+---
+
+<div align="center">
+<sub>LibroNet © 2025 — Sistema Distribuido de Gestión Bibliotecaria</sub>
+</div>
