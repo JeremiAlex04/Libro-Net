@@ -40,10 +40,10 @@ El sistema implementa conceptos fundamentales de **sistemas distribuidos**:
 | Concepto | Implementación |
 |----------|---------------|
 | 🔒 Exclusión Mutua | Algoritmo de Dekker (Versión 5) con variables `volatile` compartidas |
-| 🕐 Sincronización de Relojes | Algoritmo de Cristian vía `GET /api/time` en el API Gateway |
+| 🕐 Sincronización de Relojes | Algoritmo de Cristian vía servidor de tiempo en el API Gateway |
 | ⚖️ Balanceo de Carga | Netflix Eureka + Spring Cloud Gateway (round-robin entre nodos) |
-| 🗄️ Consistencia de Datos | Transacciones ACID con bloqueo pesimista (`SELECT FOR UPDATE`) |
-| 🚚 Logística Distribuida | Estados de préstamo: `PENDIENTE_DE_ENVIO → EN_TRANSITO → ENTREGADO` |
+| 🗄️ Consistencia de Datos | Transacciones ACID con bloqueo pesimista a nivel de base de datos |
+| 🚚 Logística Distribuida | Estados de préstamo: Pendiente → En Tránsito → Entregado |
 
 ---
 
@@ -55,66 +55,52 @@ La biblioteca opera bajo el siguiente escenario real:
 
 ### Condiciones del escenario
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  RESTRICCIÓN PRINCIPAL: Solo UN préstamo puede procesarse       │
-│  a la vez sobre un mismo libro (recurso compartido crítico).    │
-│  Si ambas sedes solicitan el último ejemplar simultáneamente,   │
-│  el sistema DEBE garantizar que solo una lo obtenga.            │
-└─────────────────────────────────────────────────────────────────┘
-```
+> [!IMPORTANT]
+> **Restricción principal:** Solo UN préstamo puede procesarse a la vez sobre un mismo libro (recurso compartido crítico). Si ambas sedes solicitan el último ejemplar simultáneamente, el sistema DEBE garantizar que solo una lo obtenga.
 
 **Actores del sistema:**
-- 👤 **Bibliotecario** — Empleado autenticado por sede y rol
-- 📗 **Libro** — Recurso con stock separado por sede (`copiasNorte`, `copiasSur`) y enlace digital
-- 🏢 **Sede** — Nodo distribuido con su propia instancia del servicio de préstamos
-- 🌐 **Gateway** — Único punto de entrada externo; actúa también como servidor de tiempo de referencia
+
+| Actor | Descripción |
+|-------|-------------|
+| 👤 **Bibliotecario** | Empleado autenticado por sede y rol |
+| 📗 **Libro** | Recurso con stock separado por sede y enlace digital |
+| 🏢 **Sede** | Nodo distribuido con su propia instancia del servicio de préstamos |
+| 🌐 **Gateway** | Único punto de entrada externo; actúa también como servidor de tiempo de referencia |
 
 ---
 
 ## 🏗️ Arquitectura General
 
-```
-                         ┌─────────────────────────────────┐
-                         │         INTERNET / CLIENTE       │
-                         │    Frontend React (puerto 5173)  │
-                         └────────────────┬────────────────┘
-                                          │ HTTP
-                         ┌────────────────▼────────────────┐
-                         │         API GATEWAY              │
-                         │   Spring Cloud Gateway :8080     │
-                         │   ┌──────────────────────────┐  │
-                         │   │  /api/time  (Ref. Clock) │  │
-                         │   └──────────────────────────┘  │
-                         └──────┬────────────┬─────────────┘
-                                │            │
-              ┌─────────────────▼──┐   ┌─────▼──────────────┐
-              │  CATÁLOGO SERVICE  │   │  PRÉSTAMOS SERVICE  │
-              │  Spring Boot :808x │   │  (Load Balanced)    │
-              │  ┌──────────────┐  │   │  ┌───────────────┐  │
-              │  │ /api/catalogo│  │   │  │ Nodo NORTE    │  │
-              │  └──────────────┘  │   │  │ (puerto rand.)│  │
-              └─────────┬──────────┘   │  ├───────────────┤  │
-                        │              │  │ Nodo SUR      │  │
-              ┌─────────▼──────────┐   │  │ (puerto rand.)│  │
-              │  Netflix Eureka    │   │  └───────────────┘  │
-              │  Service Registry  │   └─────────┬───────────┘
-              │     :8761          │             │
-              └────────────────────┘   ┌─────────▼───────────┐
-                                       │    PostgreSQL :5435   │
-                                       │    biblioteca_db      │
-                                       │  ┌─────┐  ┌───────┐  │
-                                       │  │libro│  │presta-│  │
-                                       │  │     │  │  mo   │  │
-                                       │  └─────┘  └───────┘  │
-                                       └──────────────────────┘
+```mermaid
+graph TD
+    U["🌐 Usuario / Navegador<br/>(puerto 5173)"]
+    FE["⚛️ Frontend React<br/>Vite + React 18"]
+    GW["🔀 API Gateway<br/>Spring Cloud Gateway :8080<br/>[ /api/time → Servidor de Tiempo ]"]
+    EUR["📋 Netflix Eureka<br/>Service Registry :8761"]
+    CAT["📚 Catálogo Service<br/>Spring Boot<br/>[ /api/catalogo ]"]
+    PN["🏢 Préstamos-Norte<br/>Spring Boot<br/>[ /api/prestamos ]"]
+    PS["🏢 Préstamos-Sur<br/>Spring Boot<br/>[ /api/prestamos ]"]
+    DB["🗄️ PostgreSQL :5435<br/>biblioteca_db<br/>[ libro · prestamo · bibliotecario ]"]
+
+    U -->|HTTP| FE
+    FE -->|Todas las peticiones REST| GW
+    GW -->|Descubre servicios| EUR
+    GW -->|Enruta /api/catalogo| CAT
+    GW -->|Enruta /api/prestamos<br/>round-robin| PN
+    GW -->|Enruta /api/prestamos<br/>round-robin| PS
+    CAT -->|Se registra en| EUR
+    PN -->|Se registra en| EUR
+    PS -->|Se registra en| EUR
+    CAT -->|Lectura| DB
+    PN -->|Lectura / Escritura| DB
+    PS -->|Lectura / Escritura| DB
 ```
 
 ---
 
 ## 🧩 Componentes del Sistema
 
-### 1. `_frontend-libronet` — Interfaz de Usuario (React + Vite)
+### 1. Frontend — Interfaz de Usuario (React + Vite)
 
 Aplicación SPA construida con React 18. Implementa:
 - **Autenticación por sede**: Login de bibliotecario validado contra la base de datos; el acceso es restringido según sede y rol.
@@ -123,28 +109,28 @@ Aplicación SPA construida con React 18. Implementa:
 - **Panel de Logística**: Vista bifurcada (logística activa / historial) con gestión de estados inter-sedes.
 - **Modo Auditoría**: Revela los datos de sincronización de Cristian (Drift, RTT, hora corregida) por préstamo.
 
-### 2. `api-gateway` — Spring Cloud Gateway
+### 2. API Gateway — Spring Cloud Gateway
 
 Punto de entrada único para todas las peticiones HTTP externas. Responsabilidades:
-- **Enrutamiento dinámico** hacia `catalogo-service` y `prestamos-service` vía Eureka.
-- **Balanceo de carga** automático entre los nodos `prestamos-norte` y `prestamos-sur` (round-robin).
-- **Servidor de Tiempo de Referencia** — Expone `GET /api/time` que retorna `serverTimeMs`, utilizado por cada nodo para ejecutar el Algoritmo de Cristian.
+- **Enrutamiento dinámico** hacia el catálogo y el servicio de préstamos vía Eureka.
+- **Balanceo de carga** automático entre los nodos Norte y Sur (round-robin).
+- **Servidor de Tiempo de Referencia** — Expone un endpoint que retorna el tiempo actual del servidor, utilizado por cada nodo para ejecutar el Algoritmo de Cristian.
 
-### 3. `catalogo-service` — Catálogo de Libros
+### 3. Catálogo Service — Catálogo de Libros
 
 Microservicio de solo lectura que expone el inventario centralizado de libros con búsqueda por título/autor.
 
-### 4. `prestamos-service` — Motor de Préstamos (×2 instancias)
+### 4. Préstamos Service — Motor de Préstamos (×2 instancias)
 
-El servicio más crítico del sistema. Se despliega en **dos instancias simultáneas** (`prestamos-norte` y `prestamos-sur`), ambas registradas en Eureka. Responsabilidades:
+El servicio más crítico del sistema. Se despliega en **dos instancias simultáneas** (Norte y Sur), ambas registradas en Eureka. Responsabilidades:
 - Procesar solicitudes de préstamo con bloqueo transaccional pesimista.
 - Aplicar el **Algoritmo de Cristian** para corregir el timestamp de cada operación.
 - Proveer el endpoint de simulación del **Algoritmo de Dekker** para demostración de exclusión mutua.
 - Gestionar el ciclo de vida logístico de los préstamos inter-sedes.
 
-### 5. `red` — Netflix Eureka Server
+### 5. Netflix Eureka — Service Registry
 
-Registro de servicios (Service Registry). Todos los microservicios se registran aquí al arrancar; el Gateway consulta este registro para enrutar dinámicamente sin IPs hardcodeadas.
+Registro de servicios. Todos los microservicios se registran aquí al arrancar; el Gateway consulta este registro para enrutar dinámicamente sin IPs hardcodeadas.
 
 ### 6. PostgreSQL — Base de Datos Compartida
 
@@ -152,7 +138,7 @@ Base de datos relacional única compartida por todas las instancias. Las tablas 
 
 | Tabla | Descripción |
 |-------|-------------|
-| `libro` | Inventario con `copias_norte` y `copias_sur` separadas por sede |
+| `libro` | Inventario con copias separadas por Sede Norte y Sede Sur |
 | `prestamo` | Registro auditable de cada transacción con timestamps de Cristian |
 | `bibliotecario` | Usuarios del sistema con sede y rol asociados |
 
@@ -164,64 +150,79 @@ Base de datos relacional única compartida por todas las instancias. Las tablas 
 
 Cuando **dos sedes solicitan simultáneamente el último ejemplar físico** de un libro, se produce una condición de carrera (*race condition*) sobre el inventario. Sin un mecanismo de exclusión mutua, ambas podrían leer `stock = 1`, ambas decrementarlo, y terminar con `stock = -1` — una inconsistencia crítica.
 
-### Solución Implementada en el Sistema Real
+### Solución en Producción — Bloqueo Pesimista de Base de Datos
 
-El sistema utiliza **bloqueo pesimista a nivel de base de datos** (`SELECT FOR UPDATE` vía `@Lock(PESSIMISTIC_WRITE)` en el repositorio JPA). Esto garantiza que solo una transacción pueda leer y modificar el inventario de un libro a la vez a nivel de producción.
+El sistema real protege el recurso compartido mediante **bloqueo pesimista a nivel de base de datos** (`SELECT FOR UPDATE`). Esto garantiza que solo una transacción pueda leer y modificar el inventario de un libro a la vez.
 
-```java
-// LibroRepository.java
-@Lock(LockModeType.PESSIMISTIC_WRITE)
-@Query("SELECT l FROM Libro l WHERE l.id = :id")
-Optional<Libro> findByIdForUpdate(@Param("id") UUID id);
+```mermaid
+sequenceDiagram
+    participant N as 🏢 Sede Norte
+    participant DB as 🗄️ PostgreSQL
+    participant S as 🏢 Sede Sur
+
+    N->>DB: SELECT libro WHERE id=X FOR UPDATE
+    Note over DB: 🔒 Bloqueo adquirido por Norte
+    S->>DB: SELECT libro WHERE id=X FOR UPDATE
+    Note over DB: ⏳ Sede Sur espera...
+    DB-->>N: Libro encontrado (stock=1)
+    N->>DB: UPDATE libro SET copias=0
+    N->>DB: INSERT INTO prestamo
+    Note over DB: 🔓 Bloqueo liberado
+    DB-->>S: Libro encontrado (stock=0)
+    Note over S: ❌ Sin stock — rechazado
 ```
 
 ### Simulación Didáctica — Algoritmo de Dekker (Versión 5)
 
-Se implementó adicionalmente un endpoint de simulación que demuestra el **Algoritmo de Dekker V5** con dos hilos concurrentes, modelando exactamente el escenario de las dos sedes:
+Se implementó un endpoint de simulación que demuestra el **Algoritmo de Dekker V5** con dos hilos concurrentes en memoria, modelando el escenario de las dos sedes sin usar primitivas del sistema operativo.
 
-**Variables compartidas (en memoria):**
+**Variables compartidas en memoria (todas `volatile`):**
 
-```java
-private volatile boolean quiereEntrarSedeNorte = false;  // Bandera de intención Norte
-private volatile boolean quiereEntrarSedeSur   = false;  // Bandera de intención Sur
-private volatile int     turno = 1;                       // 1=Norte tiene prioridad, 2=Sur
-private volatile int     inventarioSimulado = 1;          // El recurso compartido crítico
-```
+| Variable | Rol |
+|----------|-----|
+| `quiereEntrarSedeNorte` | Bandera de intención de la Sede Norte |
+| `quiereEntrarSedeSur` | Bandera de intención de la Sede Sur |
+| `turno` | Indica cuál sede tiene prioridad en caso de empate |
+| `inventarioSimulado` | El recurso compartido crítico (valor inicial = 1) |
 
 > La palabra clave `volatile` garantiza **visibilidad** entre hilos en la JVM: ningún hilo puede cachear el valor localmente; siempre lee desde la memoria principal.
 
 ### Diagrama del Algoritmo de Dekker V5
 
-```
-  HILO SEDE NORTE                          HILO SEDE SUR
-  ─────────────────                        ──────────────────
-  quiereEntrar = true                      quiereEntrar = true
-        │                                        │
-        ▼                                        ▼
-  ¿quiereSur == true?──NO──┐         ┌──NO──¿quiereNorte == true?
-        │YES                │         │          │YES
-        ▼                   │         │          ▼
-  ¿turno == 2?──NO──esperar │         │  esperar──NO──¿turno == 1?
-        │YES                │         │                    │YES
-        ▼                   │         │                    ▼
-  quiereNorte = false       │         │         quiereSur = false
-        │                   │         │                    │
-  espera (turno≠2)          │         │         espera (turno≠1)
-        │                   │         │                    │
-  quiereNorte = true        │         │         quiereSur = true
-        │                   │         │                    │
-        └───────────────────┘         └────────────────────┘
-                  │                                │
-                  ▼                                ▼
-         ╔═══════════════╗               ╔════════════════╗
-         ║  SECCIÓN      ║               ║  SECCIÓN       ║
-         ║  CRÍTICA      ║   (solo uno   ║  CRÍTICA       ║
-         ║  NORTE        ║   a la vez)   ║  SUR           ║
-         ╚═══════════════╝               ╚════════════════╝
-                  │                                │
-                  ▼                                ▼
-         turno = 2                        turno = 1
-         quiereNorte = false              quiereSur = false
+```mermaid
+flowchart TD
+    subgraph NORTE["🏢 Hilo — Sede Norte"]
+        N1["Quiero entrar = true"]
+        N2{{"¿Sede Sur también quiere?"}}
+        N3{{"¿El turno es de Sur?"}}
+        N4["Cedo intención temporalmente<br/>Espero que cambie el turno<br/>Recupero intención"]
+        N5["✅ ENTRA A SECCIÓN CRÍTICA<br/>Descuenta inventario"]
+        N6["Turno = Sur<br/>Quiero entrar = false"]
+    end
+
+    subgraph SUR["🏢 Hilo — Sede Sur"]
+        S1["Quiero entrar = true"]
+        S2{{"¿Sede Norte también quiere?"}}
+        S3{{"¿El turno es de Norte?"}}
+        S4["Cedo intención temporalmente<br/>Espero que cambie el turno<br/>Recupero intención"]
+        S5["✅ ENTRA A SECCIÓN CRÍTICA<br/>Descuenta inventario"]
+        S6["Turno = Norte<br/>Quiero entrar = false"]
+    end
+
+    N1 --> N2
+    N2 -- No --> N5
+    N2 -- Sí --> N3
+    N3 -- Sí, cedo --> N4 --> N2
+    N3 -- No, espero --> N2
+
+    S1 --> S2
+    S2 -- No --> S5
+    S2 -- Sí --> S3
+    S3 -- Sí, cedo --> S4 --> S2
+    S3 -- No, espero --> S2
+
+    N5 --> N6
+    S5 --> S6
 ```
 
 ### Propiedades Garantizadas
@@ -233,30 +234,13 @@ private volatile int     inventarioSimulado = 1;          // El recurso comparti
 | **Ausencia de Starvation** | Ningún proceso espera indefinidamente gracias al turno | ✅ |
 | **Sin Espera Activa Desenfrenada** | Cede el turno antes de re-intentar | ✅ |
 
-### Cómo Probar la Simulación
+### Resultado de la Simulación
 
-```bash
-# Invoca el endpoint de simulación de Dekker
-GET http://localhost:8080/api/simulacion/dekker
-```
+Al invocar `GET /api/simulacion/dekker`, el sistema lanza ambos hilos simultáneamente y retorna la bitácora de eventos. El resultado garantizado es:
 
-**Respuesta esperada:**
-```json
-[
-  "[SISTEMA] Iniciando Simulación: Algoritmo de Dekker (Versión 5) para 2 procesos.",
-  "[SEDE NORTE] Iniciando intento de préstamo...",
-  "[SEDE SUR] Iniciando intento de préstamo...",
-  "[SEDE NORTE] Entró a la Sección Crítica (Exclusión Mutua garantizada).",
-  "[SEDE NORTE] Préstamo exitoso. Inventario restante: 0",
-  "[SEDE NORTE] Salió de la Sección Crítica y cedió el turno.",
-  "[SEDE SUR] Entró a la Sección Crítica (Exclusión Mutua garantizada).",
-  "[SEDE SUR] Fallo: Inventario agotado.",
-  "[SEDE SUR] Salió de la Sección Crítica y cedió el turno.",
-  "[SISTEMA] Simulación finalizada. Ningún proceso bloqueó al otro de forma permanente."
-]
-```
-
-> Solo **una** sede obtiene el libro. La otra entra a la sección crítica pero encuentra el inventario en 0 — sin inconsistencia ni corrupción de datos.
+- ✅ **Sede Norte** entra a la sección crítica → descuenta inventario → sale → cede el turno.
+- ✅ **Sede Sur** entra a la sección crítica → encuentra inventario en 0 → sale sin corrupción.
+- ✅ Ningún proceso bloquea al otro de forma permanente.
 
 ---
 
@@ -264,96 +248,58 @@ GET http://localhost:8080/api/simulacion/dekker
 
 El siguiente diagrama describe el recorrido completo desde que el bibliotecario hace clic en "Solicitar Préstamo" hasta que el libro es entregado:
 
-```
-FRONTEND (React)          API GATEWAY           PRESTAMOS-SERVICE        PostgreSQL
-─────────────────        ─────────────         ──────────────────        ──────────
-     │                        │                        │                      │
-     │ POST /api/prestamos     │                        │                      │
-     │ /{libroId}?digital=X   │                        │                      │
-     │  Headers:              │                        │                      │
-     │   X-Sede: "Sede Norte" │                        │                      │
-     │   X-Bibliotecario: ... │                        │                      │
-     ├───────────────────────►│                        │                      │
-     │                        │  Enrutamiento          │                      │
-     │                        │  (round-robin Eureka)  │                      │
-     │                        ├───────────────────────►│                      │
-     │                        │                        │                      │
-     │                        │                        │ SELECT * FROM libro  │
-     │                        │                        │ WHERE id=?           │
-     │                        │                        │ FOR UPDATE           │
-     │                        │                        ├─────────────────────►│
-     │                        │                        │◄─────────────────────┤
-     │                        │                        │  (bloqueo adquirido) │
-     │                        │                        │                      │
-     │                        │           ┌────────────┴───────────┐         │
-     │                        │           │   DECISIÓN DE STOCK    │         │
-     │                        │           │                        │         │
-     │                        │           │ ¿digital?              │         │
-     │                        │           │   └─► ENTREGADO        │         │
-     │                        │           │       (link digital)   │         │
-     │                        │           │                        │         │
-     │                        │           │ ¿stock local > 0?      │         │
-     │                        │           │   └─► ENTREGADO local  │         │
-     │                        │           │                        │         │
-     │                        │           │ ¿stock otra sede > 0?  │         │
-     │                        │           │   └─► PENDIENTE_ENVIO  │         │
-     │                        │           │       (logística inter)│         │
-     │                        │           │                        │         │
-     │                        │           │ ¿sin stock?            │         │
-     │                        │           │   └─► Error 503        │         │
-     │                        │           └────────────┬───────────┘         │
-     │                        │                        │                      │
-     │                        │                        │ GET /api/time        │
-     │                        │                        │ (Algoritmo Cristian) │
-     │                        │◄───────────────────────┤                      │
-     │                        ├───────────────────────►│                      │
-     │                        │  serverTimeMs           │                      │
-     │                        │                        │ Calcula:             │
-     │                        │                        │  RTT = T1 - T0       │
-     │                        │                        │  T_corregido =       │
-     │                        │                        │  serverTime + RTT/2  │
-     │                        │                        │                      │
-     │                        │                        │ INSERT INTO prestamo │
-     │                        │                        │ (con timestamp       │
-     │                        │                        │  corregido)          │
-     │                        │                        ├─────────────────────►│
-     │                        │                        │◄─────────────────────┤
-     │                        │                        │  (bloqueo liberado)  │
-     │◄───────────────────────┤◄───────────────────────┤                      │
-     │  200 OK: "Préstamo     │                        │                      │
-     │  aprobado..."          │                        │                      │
+```mermaid
+sequenceDiagram
+    actor B as 👤 Bibliotecario
+    participant FE as ⚛️ Frontend React
+    participant GW as 🔀 API Gateway
+    participant PS as 🏢 Préstamos Service
+    participant DB as 🗄️ PostgreSQL
+
+    B->>FE: Clic en "Solicitar Préstamo"
+    FE->>GW: POST /api/prestamos/{libroId}<br/>Headers: X-Sede, X-Bibliotecario
+    GW->>PS: Enruta (round-robin Eureka)
+
+    PS->>DB: SELECT libro FOR UPDATE
+    Note over DB: 🔒 Bloqueo pesimista adquirido
+
+    alt Préstamo digital
+        PS-->>PS: Estado → ENTREGADO<br/>Retorna enlace digital
+    else Stock local disponible
+        PS->>DB: UPDATE copias locales
+        PS-->>PS: Estado → ENTREGADO
+    else Solo hay stock en otra sede
+        PS->>DB: UPDATE copias de la otra sede
+        PS-->>PS: Estado → PENDIENTE_DE_ENVIO
+    else Sin stock en ninguna sede
+        PS-->>GW: Error 503 — Sin copias disponibles
+        GW-->>FE: Denegado
+    end
+
+    PS->>GW: GET /api/time (Algoritmo de Cristian)
+    GW-->>PS: serverTimeMs
+    Note over PS: Calcula T_corregido = T_servidor + RTT/2
+
+    PS->>DB: INSERT prestamo (con timestamp corregido)
+    Note over DB: 🔓 Bloqueo liberado
+
+    PS-->>GW: 200 OK — Resultado del préstamo
+    GW-->>FE: Respuesta final
+    FE-->>B: Alerta de éxito o rechazo
 ```
 
 ### Estados del Ciclo de Vida de un Préstamo Inter-Sedes
 
-```
-                    ┌─────────────────────────────────────────────────┐
-                    │           LIBRO SOLICITADO                       │
-                    │     (stock local agotado, hay stock en otra sede)│
-                    └─────────────────────┬───────────────────────────┘
-                                          │
-                                          ▼
-                              ┌──────────────────────┐
-                              │  PENDIENTE_DE_ENVIO   │
-                              │  Acción: Sede origen  │
-                              │  debe "Despachar"     │
-                              └──────────┬───────────┘
-                                         │ Bibliotecario de Sede Origen
-                                         │ hace clic en "Despachar Envío"
-                                         ▼
-                              ┌──────────────────────┐
-                              │     EN_TRANSITO       │
-                              │  El libro está en     │
-                              │  camino físicamente   │
-                              └──────────┬───────────┘
-                                         │ Bibliotecario de Sede Destino
-                                         │ hace clic en "Entregar al Lector"
-                                         ▼
-                              ┌──────────────────────┐
-                              │      ENTREGADO        │
-                              │  Transacción cerrada  │
-                              │  Pasa a historial     │
-                              └──────────────────────┘
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> PENDIENTE_DE_ENVIO : Stock agotado en sede local<br/>se toma de la otra sede
+
+    PENDIENTE_DE_ENVIO --> EN_TRANSITO : Bibliotecario de sede origen<br/>hace clic en "Despachar Envío"
+
+    EN_TRANSITO --> ENTREGADO : Bibliotecario de sede destino<br/>hace clic en "Entregar al Lector"
+
+    ENTREGADO --> [*] : Transacción cerrada<br/>Pasa al historial
 ```
 
 ---
@@ -362,71 +308,59 @@ FRONTEND (React)          API GATEWAY           PRESTAMOS-SERVICE        Postgre
 
 En un sistema distribuido, cada nodo tiene su propio reloj físico que puede **derivar (drift)** con respecto al tiempo real. Si los préstamos se registran con timestamps incorrectos, el historial queda inconsistente.
 
-### Implementación
+### Cómo Funciona
 
 Cada vez que se procesa un préstamo, el nodo ejecuta el **Algoritmo de Cristian**:
 
-```
-         NODO SEDE               API GATEWAY (Servidor de Tiempo)
-         ─────────               ────────────────────────────────
-              │                               │
-    T0 = System.currentTimeMillis() + drift   │
-              │                               │
-              │──── GET /api/time ───────────►│
-              │                               │
-              │◄─── { serverTimeMs: T_s } ────│
-              │                               │
-    T1 = System.currentTimeMillis() + drift   │
-              │                               │
-    RTT = T1 - T0                             │
-    T_corregido = T_s + (RTT / 2)             │
-              │                               │
-    Guarda en BD:                             │
-      fechaSolicitud  = T_corregido  ← tiempo de referencia global
-      fechaLocalSede  = T0           ← tiempo local de la sede (con drift)
-      relojDriftMs    = drift configurado
-      relojRttMs      = RTT medido
+```mermaid
+sequenceDiagram
+    participant N as 🏢 Nodo Sede
+    participant GW as 🔀 API Gateway<br/>(Servidor de Tiempo)
+
+    Note over N: T₀ = reloj local + drift configurado
+    N->>GW: GET /api/time
+    GW-->>N: { serverTimeMs: T_servidor }
+    Note over N: T₁ = reloj local + drift configurado
+    Note over N: RTT = T₁ − T₀
+    Note over N: T_corregido = T_servidor + (RTT ÷ 2)
+    Note over N: Guarda en BD:<br/>• fechaSolicitud = T_corregido (referencia global)<br/>• fechaLocalSede = T₀ (reloj local con drift)<br/>• relojDriftMs = drift configurado<br/>• relojRttMs = RTT medido
 ```
 
-> La corrección `T_s + RTT/2` asume que el mensaje de respuesta tardó exactamente la mitad del viaje de ida y vuelta — compensando el desfase del reloj local.
+> La corrección **T_servidor + RTT/2** asume que la respuesta tardó exactamente la mitad del viaje de ida y vuelta — compensando el desfase del reloj local de cada sede.
 
-### Variables de Configuración de Drift
+### Datos Almacenados por Préstamo
 
-En `docker-compose.yml`, la Sede Sur puede tener un drift simulado para pruebas:
-
-```yaml
-# prestamos-sur
-environment:
-  SPRING_PROFILES_ACTIVE: docker,sede-sur
-  # En application-sede-sur.yml puede definirse: reloj.drift-ms: 3000
-```
+| Campo | Descripción |
+|-------|-------------|
+| `fechaSolicitud` | Timestamp corregido por Cristian — tiempo de referencia global |
+| `fechaLocalSede` | Timestamp del reloj local de la sede (con posible drift) |
+| `relojDriftMs` | Desfase configurado para esa instancia (simulación) |
+| `relojRttMs` | Round-Trip Time medido en la consulta al servidor de tiempo |
 
 ---
 
 ## 🚚 Logística Inter-Sedes
 
-```
-   SEDE NORTE                     SEDE SUR
-   ──────────                     ─────────
-   Solicita libro                       │
-   (stock local = 0)                    │
-   stock Sur > 0 ──────────────────────►│
-   Estado: PENDIENTE_DE_ENVIO           │
-              │                         │
-              │        Bibliotecario Sur│
-              │        ve tarea en panel│
-              │        "Saliente (Despachar)"
-              │                         │
-              │        Clic "Despachar" │
-              │◄────────────────────────┤
-   Estado: EN_TRANSITO                  │
-              │                         │
-   Bibliotecario Norte                  │
-   ve "Entrante (Recibir)"              │
-   Clic "Entregar al Lector"            │
-              │                         │
-   Estado: ENTREGADO                    │
-   Mueve a Historial                    │
+Cuando una sede no tiene stock local, el préstamo genera un flujo de logística física entre sedes:
+
+```mermaid
+sequenceDiagram
+    actor BN as 👤 Bibliotecario Norte
+    participant SN as 🏢 Sede Norte
+    participant SS as 🏢 Sede Sur
+    actor BS as 👤 Bibliotecario Sur
+
+    BN->>SN: Solicita libro<br/>(stock local = 0)
+    SN->>SS: Descuenta stock de Sede Sur
+    Note over SN,SS: Estado: PENDIENTE DE ENVÍO
+
+    SS-->>BS: Panel muestra tarea<br/>"Saliente — Despachar"
+    BS->>SS: Clic en "Despachar Envío"
+    Note over SN,SS: Estado: EN TRÁNSITO
+
+    SN-->>BN: Panel muestra tarea<br/>"Entrante — Recibir"
+    BN->>SN: Clic en "Entregar al Lector"
+    Note over SN,SS: Estado: ENTREGADO ✅
 ```
 
 ---
@@ -455,6 +389,22 @@ docker-compose up --build -d
 docker-compose ps
 ```
 
+### Orden de Arranque
+
+```mermaid
+graph LR
+    DB["🗄️ PostgreSQL"] --> EUR["📋 Eureka"]
+    EUR --> CAT["📚 Catálogo"]
+    EUR --> PN["🏢 Préstamos Norte"]
+    EUR --> PS["🏢 Préstamos Sur"]
+    CAT --> GW["🔀 API Gateway"]
+    PN --> GW
+    PS --> GW
+    GW --> FE["⚛️ Frontend"]
+```
+
+> Los servicios tienen **healthchecks** configurados en `docker-compose.yml` para garantizar este orden de arranque automáticamente.
+
 ### Verificación de Salud
 
 | Servicio | URL | Descripción |
@@ -463,14 +413,6 @@ docker-compose ps
 | API Gateway | http://localhost:8080 | Punto de entrada REST |
 | Eureka Dashboard | http://localhost:8761 | Panel de registro de servicios |
 | PostgreSQL | localhost:5435 | Base de datos |
-
-### Orden de Arranque
-
-```
-PostgreSQL ──► Eureka ──► Catálogo & Préstamos ──► Gateway ──► Frontend
-```
-
-> Los servicios tienen healthchecks configurados en `docker-compose.yml` para garantizar este orden.
 
 ---
 
