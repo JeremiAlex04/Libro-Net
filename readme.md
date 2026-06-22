@@ -28,6 +28,7 @@ sincronización de relojes y balanceo de carga.**
 8. [Logística Inter-Sedes](#-logística-inter-sedes)
 9. [Levantamiento del Sistema](#-levantamiento-del-sistema)
 10. [Endpoints de la API](#-endpoints-de-la-api)
+11. [Semana 14 — Elección de Líder: Algoritmo en Anillo Lógico](#-semana-14--elección-de-líder-algoritmo-en-anillo-lógico)
 
 ---
 
@@ -44,6 +45,7 @@ El sistema implementa conceptos fundamentales de **sistemas distribuidos**:
 | ⚖️ Balanceo de Carga | Netflix Eureka + Spring Cloud Gateway (round-robin entre nodos) |
 | 🗄️ Consistencia de Datos | Transacciones ACID con bloqueo pesimista a nivel de base de datos |
 | 🚚 Logística Distribuida | Estados de préstamo: Pendiente → En Tránsito → Entregado |
+| 👑 Elección de Líder | Algoritmo en Anillo Lógico (Chang-Roberts) dinámico con Eureka |
 
 ---
 
@@ -442,12 +444,36 @@ Todos los endpoints son accesibles a través del API Gateway en `http://localhos
 |--------|----------|-------------|
 | `GET` | `/api/simulacion/dekker` | Ejecutar simulación del Algoritmo de Dekker V5 |
 | `GET` | `/api/time` | Obtener tiempo de referencia del servidor (Algoritmo de Cristian) |
+| `GET` | `/api/eleccion/estado` | Consultar estado del nodo en el anillo de elección |
+| `POST` | `/api/eleccion/simular-caida?offline={bool}` | Simular caída/recuperación en caliente del nodo (retorna 503) |
+| `POST` | `/api/eleccion/forzar-eleccion` | Forzar el inicio de un proceso de elección manual |
+
+---
+
+## 👑 Semana 14 — Elección de Líder: Algoritmo en Anillo Lógico
+
+Para dotar al sistema de **alta disponibilidad y tolerancia a fallos**, se diseñó e implementó un mecanismo de elección de líder automatizado basado en el **Algoritmo en Anillo Lógico (Chang-Roberts)**.
+
+### Concepto y Funcionamiento
+1. **Configuración de Identidades**: Cada sede del microservicio de préstamos se configura con un `node-id` único (Sede Norte = `1`, Sede Sur = `2`) y se registra en Netflix Eureka, el cual actúa como el directorio compartido para descubrir la topología de la red.
+2. **Estructura en Anillo**: Al arrancar o al detectar cambios en el clúster, los nodos recuperan las instancias activas del servicio en Eureka, las ordenan por su ID de menor a mayor y forman un anillo lógico direccional (ej. `Sede Norte (1) -> Sede Sur (2) -> Sede Norte (1)`).
+3. **Heartbeat y Detección de Caídas**: Los nodos seguidores monitorean periódicamente (cada 5 segundos) la salud del líder mediante un ping directo. Si el líder deja de responder, el nodo que detecta la falla cambia su estado a `ELECTION` e inicia la votación.
+4. **Paso de Mensajes (Chang-Roberts)**:
+   - Se envía un mensaje `ELECTION(candidateId)` a su sucesor en el anillo.
+   - Si un nodo recibe un ID candidato mayor que el suyo, lo reenvía. Si recibe un ID menor y no ha participado, inyecta su propio ID superior.
+   - Si el mensaje `ELECTION(myId)` regresa al nodo emisor original, significa que tiene el ID más alto y ha ganado. Se autoproclama líder y envía un mensaje `COORDINATOR(myId)` alrededor del anillo para notificar el resultado.
+5. **Omisión de Nodos Caídos**: Si un nodo no puede comunicarse con su sucesor inmediato (por estar caído), salta a ese nodo en el anillo e intenta transmitir el mensaje al sucesor del sucesor, garantizando la consistencia y continuidad del algoritmo.
+
+### Demostración Visual de Tolerancia a Fallos
+A través del **Modo Auditoría** en el frontend, se expone una consola gráfica interactiva para comprobar el algoritmo:
+- **Simular Caída**: Configura un nodo como *Offline* (comienza a responder con error HTTP 503 y detiene sus transmisiones). El otro nodo detectará la caída en un intervalo de 5 segundos, iniciará la elección saltando al nodo caído y tomará el control como nuevo Líder.
+- **Restaurar Nodo**: Levanta el nodo simulado. Este se conectará, descubrirá el líder actual del anillo y pasará a ser seguidor pacíficamente hasta que ocurra otra elección.
 
 ---
 
 ## 👥 Equipo
 
-Proyecto desarrollado para el curso de **Sistemas Distribuidos** — Semana 13: Exclusión Mutua.
+Proyecto desarrollado para el curso de **Sistemas Distribuidos** — Semana 13 y 14.
 
 ---
 

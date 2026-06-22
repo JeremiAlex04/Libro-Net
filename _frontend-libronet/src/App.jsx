@@ -34,13 +34,78 @@ function App() {
     }));
   };
 
+  // ==========================================
+  // ESTADOS DE ELECCIÓN DE LÍDER (SEMANA 14)
+  // ==========================================
+  const [eleccionNorte, setEleccionNorte] = useState(null);
+  const [eleccionSur, setEleccionSur] = useState(null);
+
+  const obtenerEstadoEleccion = async () => {
+    try {
+      const res = await fetch('/api/eleccion/norte/estado');
+      if (res.ok) {
+        const data = await res.json();
+        setEleccionNorte(data);
+      } else {
+        setEleccionNorte(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 1, nodeName: 'Sede Norte', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+      }
+    } catch (e) {
+      setEleccionNorte(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 1, nodeName: 'Sede Norte', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+    }
+
+    try {
+      const res = await fetch('/api/eleccion/sur/estado');
+      if (res.ok) {
+        const data = await res.json();
+        setEleccionSur(data);
+      } else {
+        setEleccionSur(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 2, nodeName: 'Sede Sur', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+      }
+    } catch (e) {
+      setEleccionSur(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 2, nodeName: 'Sede Sur', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+    }
+  };
+
+  const cambiarEstadoCaida = async (sede, offline) => {
+    try {
+      const endpoint = `/api/eleccion/${sede}/simular-caida?offline=${offline}`;
+      const res = await fetch(endpoint, { method: 'POST' });
+      if (res.ok) {
+        mostrarAlerta('success', `${sede === 'norte' ? 'Sede Norte' : 'Sede Sur'} configurada como ${offline ? 'CAÍDA' : 'ACTIVA'}`);
+        obtenerEstadoEleccion();
+      } else {
+        mostrarAlerta('danger', 'No se pudo cambiar el estado de caída.');
+      }
+    } catch (e) {
+      mostrarAlerta('danger', 'Error de conexión al simular caída.');
+    }
+  };
+
+  const forzarEleccionSede = async (sede) => {
+    try {
+      const endpoint = `/api/eleccion/${sede}/forzar-eleccion`;
+      const res = await fetch(endpoint, { method: 'POST' });
+      if (res.ok) {
+        mostrarAlerta('success', `Elección forzada desde ${sede === 'norte' ? 'Sede Norte' : 'Sede Sur'}`);
+        obtenerEstadoEleccion();
+      } else {
+        mostrarAlerta('danger', 'No se pudo iniciar la elección.');
+      }
+    } catch (e) {
+      mostrarAlerta('danger', 'Error de conexión al forzar elección.');
+    }
+  };
+
   // Carga inicial al iniciar sesión
   useEffect(() => {
     if (usuarioActivo) {
       buscarEnCatalogo('', false);
       obtenerPrestamos(false);
+      if (modoAuditoria) {
+        obtenerEstadoEleccion();
+      }
     }
-  }, [usuarioActivo]);
+  }, [usuarioActivo, modoAuditoria]);
 
   // ==========================================
   // EFECTO: AUTO-POLLING EN SEGUNDO PLANO
@@ -48,14 +113,16 @@ function App() {
   useEffect(() => {
     if (!usuarioActivo) return;
 
-    // Realiza un refresco silencioso cada 5 segundos para sincronización concurrente
     const pollingInterval = setInterval(() => {
       buscarEnCatalogo(query, true);
       obtenerPrestamos(true);
+      if (modoAuditoria) {
+        obtenerEstadoEleccion();
+      }
     }, 5000);
 
     return () => clearInterval(pollingInterval);
-  }, [usuarioActivo, query]);
+  }, [usuarioActivo, query, modoAuditoria]);
 
   // ==========================================
   // LÓGICA DE RED Y LLAMADAS AL GATEWAY
@@ -291,6 +358,144 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* PANEL DE ELECCIÓN DE LÍDER (SEMANA 14) */}
+        {modoAuditoria && (
+          <div className="card p-4 mb-4 bg-white text-dark border-light-subtle shadow-sm rounded-3">
+            <h5 className="fw-bold text-dark mb-1 fs-5">
+              <i className="bi bi-diagram-3 text-primary me-2"></i>
+              Consola de Coordinación: Elección de Líder en Anillo Lógico (Chang-Roberts)
+            </h5>
+            <p className="text-secondary small mb-4">
+              Visualización y simulación de tolerancia a fallos del algoritmo distribuido de elección.
+            </p>
+
+            <div className="row g-4 mb-4 align-items-stretch">
+              {/* Sede Norte Node Card */}
+              <div className="col-md-6">
+                <div className={`card h-100 p-3 border-light-subtle shadow-xs bg-light position-relative ${eleccionNorte?.isOffline ? 'opacity-75' : ''}`}>
+                  {eleccionNorte?.liderId === 1 && !eleccionNorte?.isOffline && (
+                    <span className="position-absolute top-0 end-0 translate-middle-y badge bg-success-subtle text-success border border-success-subtle px-3 py-1.5 rounded-pill me-3 fs-7 fw-bold">
+                      👑 LÍDER ACTUAL
+                    </span>
+                  )}
+                  <div className="d-flex align-items-center gap-3 mb-3">
+                    <div className={`rounded-circle p-2.5 d-flex align-items-center justify-content-center ${eleccionNorte?.isOffline ? 'bg-danger-subtle text-danger' : 'bg-primary-subtle text-primary'}`} style={{ width: '48px', height: '48px' }}>
+                      <i className={`bi ${eleccionNorte?.isOffline ? 'bi-cpu-fill' : 'bi-pc-display'} fs-4`}></i>
+                    </div>
+                    <div>
+                      <h6 className="fw-bold mb-0 text-dark">Sede Norte (ID: 1)</h6>
+                      <span className="small text-secondary">Puerto: 8081 | Sucesora: Sede Sur</span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Estado del Nodo:</span>
+                      <span className={`fw-bold ${eleccionNorte?.isOffline ? 'text-danger' : (eleccionNorte?.estadoNode === 'ELECTION' ? 'text-warning' : 'text-success')}`}>
+                        {eleccionNorte?.isOffline ? '🔴 OFFLINE' : `🟢 ONLINE (${eleccionNorte?.estadoNode})`}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Líder Conocido:</span>
+                      <span className="fw-bold text-dark">
+                        {eleccionNorte?.isOffline ? 'Ninguno' : (eleccionNorte?.liderId === -1 ? 'Eligiendo...' : (eleccionNorte?.liderId === 1 ? 'Sede Norte (Yo)' : 'Sede Sur'))}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="d-flex gap-2 mt-auto">
+                    {eleccionNorte?.isOffline ? (
+                      <button className="btn btn-sm btn-success w-50 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('norte', false)}>
+                        <i className="bi bi-activity me-1"></i>Restaurar Nodo
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn btn-sm btn-outline-danger w-50 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('norte', true)}>
+                          <i className="bi bi-power me-1"></i>Simular Caída
+                        </button>
+                        <button className="btn btn-sm btn-outline-primary w-50 py-1.5 rounded-pill fw-semibold" onClick={() => forzarEleccionSede('norte')} disabled={eleccionNorte?.estadoNode === 'ELECTION'}>
+                          <i className="bi bi-arrow-repeat me-1"></i>Elección
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Sede Sur Node Card */}
+              <div className="col-md-6">
+                <div className={`card h-100 p-3 border-light-subtle shadow-xs bg-light position-relative ${eleccionSur?.isOffline ? 'opacity-75' : ''}`}>
+                  {eleccionSur?.liderId === 2 && !eleccionSur?.isOffline && (
+                    <span className="position-absolute top-0 end-0 translate-middle-y badge bg-success-subtle text-success border border-success-subtle px-3 py-1.5 rounded-pill me-3 fs-7 fw-bold">
+                      👑 LÍDER ACTUAL
+                    </span>
+                  )}
+                  <div className="d-flex align-items-center gap-3 mb-3">
+                    <div className={`rounded-circle p-2.5 d-flex align-items-center justify-content-center ${eleccionSur?.isOffline ? 'bg-danger-subtle text-danger' : 'bg-primary-subtle text-primary'}`} style={{ width: '48px', height: '48px' }}>
+                      <i className={`bi ${eleccionSur?.isOffline ? 'bi-cpu-fill' : 'bi-pc-display'} fs-4`}></i>
+                    </div>
+                    <div>
+                      <h6 className="fw-bold mb-0 text-dark">Sede Sur (ID: 2)</h6>
+                      <span className="small text-secondary">Puerto: 8083 | Sucesora: Sede Norte</span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Estado del Nodo:</span>
+                      <span className={`fw-bold ${eleccionSur?.isOffline ? 'text-danger' : (eleccionSur?.estadoNode === 'ELECTION' ? 'text-warning' : 'text-success')}`}>
+                        {eleccionSur?.isOffline ? '🔴 OFFLINE' : `🟢 ONLINE (${eleccionSur?.estadoNode})`}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Líder Conocido:</span>
+                      <span className="fw-bold text-dark">
+                        {eleccionSur?.isOffline ? 'Ninguno' : (eleccionSur?.liderId === -1 ? 'Eligiendo...' : (eleccionSur?.liderId === 2 ? 'Sede Sur (Yo)' : 'Sede Norte'))}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="d-flex gap-2 mt-auto">
+                    {eleccionSur?.isOffline ? (
+                      <button className="btn btn-sm btn-success w-50 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('sur', false)}>
+                        <i className="bi bi-activity me-1"></i>Restaurar Nodo
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn btn-sm btn-outline-danger w-50 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('sur', true)}>
+                          <i className="bi bi-power me-1"></i>Simular Caída
+                        </button>
+                        <button className="btn btn-sm btn-outline-primary w-50 py-1.5 rounded-pill fw-semibold" onClick={() => forzarEleccionSede('sur')} disabled={eleccionSur?.estadoNode === 'ELECTION'}>
+                          <i className="bi bi-arrow-repeat me-1"></i>Elección
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Visual Ring Representation */}
+            <div className="p-3 bg-light rounded border border-light-subtle text-center">
+              <span className="small text-secondary fw-semibold d-block mb-3">CONEXIÓN LÓGICA DEL ANILLO (DIRECCIONAL)</span>
+              <div className="d-flex justify-content-center align-items-center gap-4 flex-wrap">
+                <div className={`p-2.5 rounded-3 border fw-bold fs-7 ${eleccionNorte?.isOffline ? 'bg-danger-subtle text-danger border-danger-subtle' : (eleccionNorte?.liderId === 1 ? 'bg-success-subtle text-success border-success-subtle' : 'bg-primary-subtle text-primary border-primary-subtle')}`}>
+                  {eleccionNorte?.isOffline ? '❌ Sede Norte (Caído)' : (eleccionNorte?.liderId === 1 ? '👑 Sede Norte (Líder)' : '💻 Sede Norte')}
+                </div>
+                <div className="text-secondary fs-4">
+                  <i className="bi bi-arrow-right-circle-fill"></i>
+                </div>
+                <div className={`p-2.5 rounded-3 border fw-bold fs-7 ${eleccionSur?.isOffline ? 'bg-danger-subtle text-danger border-danger-subtle' : (eleccionSur?.liderId === 2 ? 'bg-success-subtle text-success border-success-subtle' : 'bg-primary-subtle text-primary border-primary-subtle')}`}>
+                  {eleccionSur?.isOffline ? '❌ Sede Sur (Caído)' : (eleccionSur?.liderId === 2 ? '👑 Sede Sur (Líder)' : '💻 Sede Sur')}
+                </div>
+                <div className="text-secondary fs-4">
+                  <i className="bi bi-arrow-left-circle-fill"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Panel de Control de Logística y Envío */}
         <div className="card p-4 mt-5 mb-5 bg-white text-dark border-light-subtle shadow-sm rounded-3">

@@ -31,6 +31,28 @@ spring:
           predicates:
             - Path=/api/auth/**
             
+        # 5. Ruta directa a Sede Norte (para simulación)
+        - id: prestamos-norte-direct
+          uri: http://libronet-prestamos-norte:8081
+          predicates:
+            - Path=/api/eleccion/norte/**
+          filters:
+            - RewritePath=/api/eleccion/norte/(?<remaining>.*), /api/eleccion/$$\{remaining}
+
+        # 6. Ruta directa a Sede Sur (para simulación)
+        - id: prestamos-sur-direct
+          uri: http://libronet-prestamos-sur:8083
+          predicates:
+            - Path=/api/eleccion/sur/**
+          filters:
+            - RewritePath=/api/eleccion/sur/(?<remaining>.*), /api/eleccion/$$\{remaining}
+
+        # 7. Ruta para el Servicio de Elección de Líder (balanceado)
+        - id: eleccion-service
+          uri: lb://libronet-prestamos
+          predicates:
+            - Path=/api/eleccion/**
+            
             
       # Reglas de seguridad para permitir que React se comunique
       globalcors:

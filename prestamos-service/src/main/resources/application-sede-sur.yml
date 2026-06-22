@@ -6,6 +6,11 @@ eureka:
     instance-id: ${spring.application.name}:${server.port}
     metadata-map:
       sede: Sede Sur
+      nodeId: 2
+
+eleccion:
+  node-id: 2
+  node-name: Sede Sur
 
 reloj:
   drift-ms: -15000
