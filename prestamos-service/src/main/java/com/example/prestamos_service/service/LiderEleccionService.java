@@ -8,12 +8,18 @@ import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import jakarta.annotation.PreDestroy;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 public class LiderEleccionService {
@@ -29,13 +35,26 @@ public class LiderEleccionService {
     private int liderId = -1;
     private String estadoNode = "NORMAL"; // NORMAL, ELECTION
     private boolean isOffline = false;   // Para simular caída
+    private long liderazgoEpoca = 0;
 
     private final DiscoveryClient discoveryClient;
     private final RestTemplate directRestTemplate; // RestTemplate sin @LoadBalanced para llamadas directas
+    private final ExecutorService electionExecutor;
 
     public LiderEleccionService(DiscoveryClient discoveryClient) {
         this.discoveryClient = discoveryClient;
         this.directRestTemplate = new RestTemplate(); // Cliente directo para IPs/Puertos específicos
+        this.electionExecutor = Executors.newSingleThreadExecutor(r -> {
+            Thread thread = new Thread(r);
+            thread.setName("lider-eleccion-worker");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    @PreDestroy
+    public void shutdownExecutor() {
+        electionExecutor.shutdownNow();
     }
 
     public int getNodeId() {
@@ -58,11 +77,16 @@ public class LiderEleccionService {
         return isOffline;
     }
 
+    public synchronized long getLiderazgoEpoca() {
+        return liderazgoEpoca;
+    }
+
     public synchronized void setOffline(boolean offline) {
         this.isOffline = offline;
         if (offline) {
             this.liderId = -1;
             this.estadoNode = "NORMAL";
+            this.liderazgoEpoca++;
             log.info("[ELECCIÓN] Nodo {} ({}) configurado como OFFLINE (Simulación de caída)", nodeId, nodeName);
         } else {
             log.info("[ELECCIÓN] Nodo {} ({}) configurado como ONLINE (Restaurado)", nodeId, nodeName);
@@ -107,9 +131,8 @@ public class LiderEleccionService {
         }
 
         // Ordenamos por ID de nodo ascendente
-        return nodes.stream()
-                .sorted(Comparator.comparingInt(NodeInfo::getId))
-                .collect(Collectors.toList());
+        nodes.sort(Comparator.comparingInt((NodeInfo n) -> n.getId()));
+        return nodes;
     }
 
     // Iniciar la elección
@@ -119,19 +142,20 @@ public class LiderEleccionService {
             return;
         }
 
+        this.liderazgoEpoca++;
         log.info("[ELECCIÓN] Nodo {} ({}) ha iniciado un proceso de elección.", nodeId, nodeName);
         this.estadoNode = "ELECTION";
         this.liderId = -1;
 
-        enviarMensajeEleccion(nodeId);
+        enviarMensajeEleccion(nodeId, this.liderazgoEpoca);
     }
 
     // Enviar el mensaje ELECTION(candidateId) al sucesor en el anillo
-    private void enviarMensajeEleccion(int candidateId) {
+    private void enviarMensajeEleccion(int candidateId, long term) {
         List<NodeInfo> ring = getActiveNodesInRing();
         if (ring.isEmpty()) {
             log.warn("[ELECCIÓN] Anillo vacío. Declarando a sí mismo como líder.");
-            declararLider();
+            declararLider(term);
             return;
         }
 
@@ -146,7 +170,7 @@ public class LiderEleccionService {
         if (myIndex == -1) {
             log.error("[ELECCIÓN] Este nodo {} no se encuentra registrado en Eureka.", nodeId);
             // Caída temporal o falta de registro en Eureka. Declarar líder directo como fallback
-            declararLider();
+            declararLider(term);
             return;
         }
 
@@ -158,61 +182,77 @@ public class LiderEleccionService {
             if (target.getId() == this.nodeId) {
                 // Hemos dado la vuelta completa y todos los demás están caídos
                 log.info("[ELECCIÓN] Todos los sucesores fallaron o anillo de tamaño 1. Declarando a sí mismo como líder.");
-                declararLider();
+                declararLider(term);
                 return;
             }
 
             try {
-                String targetUrl = target.getUri() + "/api/eleccion/mensaje/election?candidateId=" + candidateId;
-                log.info("[ELECCIÓN] Enviando mensaje ELECTION({}) al sucesor {} en {}", candidateId, target.getName(), targetUrl);
-                directRestTemplate.getForObject(targetUrl, String.class);
-                // Envío exitoso, terminamos
+                String targetUrl = target.getUri() + "/api/eleccion/mensaje/election?candidateId=" + candidateId + "&term=" + term;
+                log.info("[ELECCIÓN] Enviando mensaje ELECTION({}, term={}) al sucesor {} en {}", candidateId, term, target.getName(), targetUrl);
+                enviarAsync(targetUrl, target.getName(), "ELECTION");
                 return;
             } catch (Exception e) {
                 log.warn("[ELECCIÓN] Falló el envío al sucesor {} ({}). Intentando saltar al siguiente nodo.", target.getName(), e.getMessage());
             }
         }
 
-        declararLider();
+        declararLider(term);
     }
 
     // Procesar mensaje ELECTION recibido
-    public synchronized void procesarMensajeEleccion(int candidateId) {
+    public synchronized void procesarMensajeEleccion(int candidateId, long term) {
         if (isOffline) {
             throw new RuntimeException("Nodo caído");
         }
 
-        log.info("[ELECCIÓN] Nodo {} ({}) recibió ELECTION({}). Mi ID: {}", nodeId, nodeName, candidateId, nodeId);
+        if (term < this.liderazgoEpoca) {
+            log.info("[ELECCIÓN] Ignorando ELECTION({}, term={}) por ser obsoleto. term actual={}", candidateId, term, liderazgoEpoca);
+            return;
+        }
+
+        if (term > this.liderazgoEpoca) {
+            this.liderazgoEpoca = term;
+            this.estadoNode = "ELECTION";
+            this.liderId = -1;
+        }
+
+        log.info("[ELECCIÓN] Nodo {} ({}) recibió ELECTION({}, term={}). Mi ID: {}", nodeId, nodeName, candidateId, term, nodeId);
 
         if (candidateId > this.nodeId) {
             this.estadoNode = "ELECTION";
             this.liderId = -1;
-            enviarMensajeEleccion(candidateId);
+            enviarMensajeEleccion(candidateId, term);
         } else if (candidateId < this.nodeId) {
             if ("NORMAL".equals(this.estadoNode)) {
                 this.estadoNode = "ELECTION";
                 this.liderId = -1;
-                enviarMensajeEleccion(this.nodeId);
+                enviarMensajeEleccion(this.nodeId, term);
             } else {
                 log.info("[ELECCIÓN] Nodo {} ya está en estado ELECTION con ID superior o igual, ignorando ELECTION({})", nodeId, candidateId);
             }
         } else {
             // candidateId == nodeId: ¡Ganamos la elección!
             log.info("[ELECCIÓN] ¡El mensaje ELECTION regresó a mí! Nodo {} ({}) es el nuevo líder.", nodeId, nodeName);
-            declararLider();
+            declararLider(term);
         }
     }
 
     // Declararse a sí mismo líder y enviar coordinador
-    private void declararLider() {
+    private void declararLider(long term) {
+        if (term < this.liderazgoEpoca) {
+            log.info("[ELECCIÓN] Se omite declaración de líder por term obsoleto: {} < {}", term, liderazgoEpoca);
+            return;
+        }
+
+        this.liderazgoEpoca = term;
         this.liderId = this.nodeId;
         this.estadoNode = "NORMAL";
-        log.info("[ELECCIÓN] *** NODO {} ({}) SE HA DECLARADO LÍDER DEL ANILLO ***", nodeId, nodeName);
-        enviarMensajeCoordinador(this.nodeId);
+        log.info("[ELECCIÓN] *** NODO {} ({}) SE HA DECLARADO LÍDER DEL ANILLO (term={}) ***", nodeId, nodeName, term);
+        enviarMensajeCoordinador(this.nodeId, term);
     }
 
     // Enviar mensaje COORDINATOR(leaderId) al sucesor
-    private void enviarMensajeCoordinador(int leaderId) {
+    private void enviarMensajeCoordinador(int leaderId, long term) {
         List<NodeInfo> ring = getActiveNodesInRing();
         if (ring.size() <= 1) {
             return;
@@ -234,14 +274,14 @@ public class LiderEleccionService {
 
             if (target.getId() == this.nodeId) {
                 // Regresó a nosotros, fin del mensaje coordinador
-                log.info("[ELECCIÓN] Mensaje COORDINATOR({}) dio la vuelta completa en el anillo.", leaderId);
+                log.info("[ELECCIÓN] Mensaje COORDINATOR({}, term={}) dio la vuelta completa en el anillo.", leaderId, term);
                 return;
             }
 
             try {
-                String targetUrl = target.getUri() + "/api/eleccion/mensaje/coordinator?leaderId=" + leaderId;
-                log.info("[ELECCIÓN] Enviando mensaje COORDINATOR({}) al sucesor {} en {}", leaderId, target.getName(), targetUrl);
-                directRestTemplate.getForObject(targetUrl, String.class);
+                String targetUrl = target.getUri() + "/api/eleccion/mensaje/coordinator?leaderId=" + leaderId + "&term=" + term;
+                log.info("[ELECCIÓN] Enviando mensaje COORDINATOR({}, term={}) al sucesor {} en {}", leaderId, term, target.getName(), targetUrl);
+                enviarAsync(targetUrl, target.getName(), "COORDINATOR");
                 return;
             } catch (Exception e) {
                 log.warn("[ELECCIÓN] Falló envío de COORDINATOR al sucesor {} ({}). Intentando con el siguiente.", target.getName(), e.getMessage());
@@ -249,16 +289,33 @@ public class LiderEleccionService {
         }
     }
 
+    private void enviarAsync(String targetUrl, String targetName, String tipoMensaje) {
+        electionExecutor.execute(() -> {
+            try {
+                directRestTemplate.getForObject(targetUrl, String.class);
+            } catch (Exception e) {
+                log.warn("[ELECCIÓN] Falló envío asíncrono de {} a {}: {}", tipoMensaje, targetName, e.getMessage());
+            }
+        });
+    }
+
     // Procesar mensaje COORDINATOR recibido
-    public synchronized void procesarMensajeCoordinador(int leaderId) {
+    public synchronized void procesarMensajeCoordinador(int leaderId, long term) {
         if (isOffline) {
             throw new RuntimeException("Nodo caído");
         }
 
-        log.info("[ELECCIÓN] Nodo {} ({}) recibió COORDINATOR({}).", nodeId, nodeName, leaderId);
+        if (term < this.liderazgoEpoca) {
+            log.info("[ELECCIÓN] Ignorando COORDINATOR({}, term={}) por ser obsoleto. term actual={}", leaderId, term, liderazgoEpoca);
+            return;
+        }
+
+        this.liderazgoEpoca = term;
+        log.info("[ELECCIÓN] Nodo {} ({}) recibió COORDINATOR({}, term={}).", nodeId, nodeName, leaderId, term);
 
         if (leaderId == this.nodeId) {
             log.info("[ELECCIÓN] Fin de la transmisión del coordinador. Líder establecido: {}", leaderId);
+            this.liderId = leaderId;
             this.estadoNode = "NORMAL";
             return;
         }
@@ -267,7 +324,7 @@ public class LiderEleccionService {
         this.estadoNode = "NORMAL";
 
         // Reenviar
-        enviarMensajeCoordinador(leaderId);
+        enviarMensajeCoordinador(leaderId, term);
     }
 
     // Heartbeat periódico ejecutado cada 5 segundos
@@ -286,8 +343,15 @@ public class LiderEleccionService {
             return;
         }
 
-        // Si somos el líder, no necesitamos hacer pings
+        // Si somos el líder, verificamos que no haya un nodo con ID superior en el anillo
         if (this.liderId == this.nodeId) {
+            List<NodeInfo> ring = getActiveNodesInRing();
+            boolean haySuperior = ring.stream().anyMatch(n -> n.getId() > this.nodeId);
+            if (haySuperior) {
+                log.warn("[MONITOR] Hay nodos con ID superior en el anillo. Re-iniciando elección para resolver liderazgo...");
+                this.liderId = -1;
+                iniciarEleccion();
+            }
             return;
         }
 
@@ -313,6 +377,59 @@ public class LiderEleccionService {
         } catch (Exception e) {
             log.warn("[MONITOR] Líder {} inalcanzable ({}). Iniciando elección desde {}...", liderId, e.getMessage(), nodeName);
             iniciarEleccion();
+        }
+    }
+
+    // --- FUNCIÓN DE LIDERAZGO: Autorización de Préstamos Inter-Sede ---
+
+    public boolean isLider() {
+        return this.nodeId == this.liderId && this.liderId != -1;
+    }
+
+    private Optional<NodeInfo> obtenerNodoLider() {
+        return getActiveNodesInRing().stream()
+                .filter(n -> n.getId() == this.liderId)
+                .findFirst();
+    }
+
+    // Lado del líder: autoriza (o deniega) un préstamo inter-sede
+    public synchronized boolean autorizarPrestamoInterSede(UUID libroId, String sedeSolicitante) {
+        if (isOffline) {
+            throw new RuntimeException("Nodo caído");
+        }
+        if (!isLider()) {
+            log.warn("[LIDERAZGO] Nodo {} NO es el líder. No puede autorizar préstamos.", nodeName);
+            return false;
+        }
+        log.info("[LIDERAZGO] LÍDER {} AUTORIZA préstamo inter-sede del libro {} solicitado por {}",
+                nodeName, libroId, sedeSolicitante);
+        return true;
+    }
+
+    // Lado del solicitante: pide autorización al líder actual
+    public boolean solicitarAutorizacionInterSede(UUID libroId, String sedeSolicitante) {
+        Optional<NodeInfo> liderOpt = obtenerNodoLider();
+        if (!liderOpt.isPresent()) {
+            log.error("[LIDERAZGO] No se encontró al líder {} en el anillo.", liderId);
+            return false;
+        }
+
+        NodeInfo lider = liderOpt.get();
+        String url = lider.getUri()
+                + "/api/eleccion/autorizar-prestamo-inter-sede"
+                + "?libroId=" + libroId.toString()
+                + "&sedeSolicitante=" + URLEncoder.encode(sedeSolicitante, StandardCharsets.UTF_8);
+
+        try {
+            log.info("[LIDERAZGO] Solicitando autorización al líder {} en {}", lider.getName(), url);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> response = directRestTemplate.getForObject(url, Map.class);
+            boolean autorizado = response != null && Boolean.TRUE.equals(response.get("autorizado"));
+            log.info("[LIDERAZGO] Respuesta del líder: autorizado={}", autorizado);
+            return autorizado;
+        } catch (Exception e) {
+            log.error("[LIDERAZGO] Error al contactar al líder {}: {}", lider.getName(), e.getMessage());
+            return false;
         }
     }
 }

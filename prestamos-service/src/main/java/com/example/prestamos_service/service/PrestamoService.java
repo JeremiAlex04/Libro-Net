@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -27,18 +28,34 @@ public class PrestamoService {
     private final LibroRepository libroRepository;
     private final PrestamoRepository prestamoRepository;
     private final RestTemplate restTemplate;
+    private final LiderEleccionService liderEleccionService;
 
     @Value("${reloj.drift-ms:0}")
     private long clockDriftMs;
 
-    public PrestamoService(LibroRepository libroRepository, PrestamoRepository prestamoRepository, RestTemplate restTemplate) {
+    public PrestamoService(LibroRepository libroRepository, PrestamoRepository prestamoRepository, RestTemplate restTemplate, LiderEleccionService liderEleccionService) {
         this.libroRepository = libroRepository;
         this.prestamoRepository = prestamoRepository;
         this.restTemplate = restTemplate;
+        this.liderEleccionService = liderEleccionService;
     }
 
     @Transactional
     public String procesarPrestamo(UUID libroId, String sede, String bibliotecario, boolean digital) {
+        if (sede == null || sede.isBlank()) {
+            throw new IllegalArgumentException("La sede solicitante es obligatoria");
+        }
+
+        String sedeNormalizada = sede.trim();
+        boolean isNorte;
+        if ("Sede Norte".equalsIgnoreCase(sedeNormalizada)) {
+            isNorte = true;
+        } else if ("Sede Sur".equalsIgnoreCase(sedeNormalizada)) {
+            isNorte = false;
+        } else {
+            throw new IllegalArgumentException("Sede solicitante invalida: " + sedeNormalizada);
+        }
+
         Libro libro = libroRepository.findByIdForUpdate(libroId)
                 .orElseThrow(() -> new RuntimeException("Libro no encontrado en el sistema"));
 
@@ -49,7 +66,6 @@ public class PrestamoService {
             estadoFinal = EstadoPrestamo.ENTREGADO;
             mensajeRetorno = "Préstamo digital aprobado. Copia digital derivada con éxito. Enlace: " + libro.getUrlDigital();
         } else {
-            boolean isNorte = sede.equalsIgnoreCase("Sede Norte");
             int localStock = isNorte ? libro.getCopiasNorte() : libro.getCopiasSur();
             int otherStock = isNorte ? libro.getCopiasSur() : libro.getCopiasNorte();
 
@@ -63,6 +79,19 @@ public class PrestamoService {
                 estadoFinal = EstadoPrestamo.ENTREGADO;
                 mensajeRetorno = "Préstamo aprobado de forma local e inmediato. Copias restantes localmente: " + (localStock - 1);
             } else if (otherStock > 0) {
+                // Préstamo inter-sede: requiere autorización del líder
+                boolean autorizado;
+                if (liderEleccionService.isLider()) {
+                    autorizado = true;
+                    log.info("[LIDERAZGO] Nodo actual es el LÍDER. Autorizando préstamo inter-sede directamente.");
+                } else {
+                    autorizado = liderEleccionService.solicitarAutorizacionInterSede(libroId, sede);
+                }
+
+                if (!autorizado) {
+                    throw new RuntimeException("Préstamo inter-sede NO autorizado por el líder. El líder debe aprobar los préstamos que cruzan de sede.");
+                }
+
                 if (isNorte) {
                     libro.setCopiasSur(libro.getCopiasSur() - 1);
                 } else {
@@ -71,7 +100,7 @@ public class PrestamoService {
                 libroRepository.save(libro);
                 estadoFinal = EstadoPrestamo.PENDIENTE_DE_ENVIO;
                 String otraSede = isNorte ? "Sede Sur" : "Sede Norte";
-                mensajeRetorno = "Préstamo registrado. Estado: PENDIENTE DE ENVÍO desde " + otraSede + ". Copias restantes allí: " + (otherStock - 1);
+                mensajeRetorno = "Préstamo inter-sede autorizado por el líder. Estado: PENDIENTE DE ENVÍO desde " + otraSede + ". Copias restantes allí: " + (otherStock - 1);
             } else {
                 throw new RuntimeException("No hay copias físicas disponibles de este libro en ninguna sede.");
             }
@@ -121,6 +150,7 @@ public class PrestamoService {
                 rtt,
                 estadoFinal
         );
+        prestamo.setAutorizadoPorLider(liderEleccionService.getLiderId());
         prestamoRepository.save(prestamo);
 
         return mensajeRetorno;
@@ -133,9 +163,12 @@ public class PrestamoService {
 
     @Transactional
     public Prestamo actualizarEstado(UUID id, EstadoPrestamo estado) {
-        Prestamo prestamo = prestamoRepository.findById(id)
+        UUID idSeguro = Objects.requireNonNull(id, "El id del préstamo es requerido");
+        EstadoPrestamo estadoSeguro = Objects.requireNonNull(estado, "El estado es requerido");
+
+        Prestamo prestamo = prestamoRepository.findById(idSeguro)
                 .orElseThrow(() -> new RuntimeException("Registro de préstamo no encontrado"));
-        prestamo.setEstado(estado);
+        prestamo.setEstado(estadoSeguro);
         return prestamoRepository.save(prestamo);
     }
 }

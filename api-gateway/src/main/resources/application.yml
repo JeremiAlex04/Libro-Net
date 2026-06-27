@@ -33,22 +33,31 @@ spring:
             
         # 5. Ruta directa a Sede Norte (para simulación)
         - id: prestamos-norte-direct
+          order: 0
           uri: http://libronet-prestamos-norte:8081
           predicates:
             - Path=/api/eleccion/norte/**
           filters:
-            - RewritePath=/api/eleccion/norte/(?<remaining>.*), /api/eleccion/$$\{remaining}
+            - name: RewritePath
+              args:
+                regexp: /api/eleccion/norte/(.*)
+                replacement: /api/eleccion/$1
 
         # 6. Ruta directa a Sede Sur (para simulación)
         - id: prestamos-sur-direct
+          order: 1
           uri: http://libronet-prestamos-sur:8083
           predicates:
             - Path=/api/eleccion/sur/**
           filters:
-            - RewritePath=/api/eleccion/sur/(?<remaining>.*), /api/eleccion/$$\{remaining}
+            - name: RewritePath
+              args:
+                regexp: /api/eleccion/sur/(.*)
+                replacement: /api/eleccion/$1
 
         # 7. Ruta para el Servicio de Elección de Líder (balanceado)
         - id: eleccion-service
+          order: 2
           uri: lb://libronet-prestamos
           predicates:
             - Path=/api/eleccion/**

@@ -42,8 +42,8 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO bibliotecario (username, password, sede, rol)
 VALUES
-('admin_norte', 'norte123', 'Sede Norte', 'Bibliotecario'),
-('admin_sur', 'sur123', 'Sede Sur', 'Bibliotecario')
+('admin_norte', '$2a$10$2iERKjtRWLWtVvQg.G86sOR6a5GWdalb10ZjlqUlv3Tcql/dtHXgO', 'Sede Norte', 'Bibliotecario'),
+('admin_sur', '$2a$10$GC327vTuBOws82tVNi1JKOu5KOfKqLEcNEPsjeUhSAL8lN6vsrR4a', 'Sede Sur', 'Bibliotecario')
 ON CONFLICT (username) DO NOTHING;
 
 -- TABLA PRESTAMO
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS prestamo (
     reloj_drift_ms BIGINT,
     reloj_rtt_ms BIGINT,
     estado VARCHAR(50) NOT NULL,
+    autorizado_por_lider INT,
 
     CONSTRAINT fk_libro
         FOREIGN KEY (libro_id)

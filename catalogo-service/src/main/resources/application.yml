@@ -6,8 +6,8 @@ spring:
     name: libronet-catalogo
   datasource:
     url: jdbc:postgresql://localhost:5432/biblioteca_db
-    username: postgres
-    password: 200319
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:

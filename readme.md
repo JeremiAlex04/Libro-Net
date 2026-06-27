@@ -471,6 +471,83 @@ A través del **Modo Auditoría** en el frontend, se expone una consola gráfica
 
 ---
 
+## ❓ Preguntas por Proyecto — Grupo 3: BiblioNet
+
+### 1) ¿El recurso compartido es el ISBN, el libro o el ejemplar físico?
+En la implementación actual, el recurso crítico compartido es el **stock lógico del libro por sede** (`copiasNorte`, `copiasSur`), no el ISBN ni un ejemplar físico individual.
+
+- **Implementado:** control de concurrencia sobre la entidad `Libro`.
+- **Si se requiere mayor granularidad:** modelar entidad `Ejemplar` por copia física y bloquear por `ejemplar_id`.
+
+### 2) ¿Qué pasa si dos sedes reservan el mismo ejemplar?
+Ambas solicitudes compiten por la misma fila de inventario y una queda esperando por bloqueo pesimista (`SELECT FOR UPDATE`). Solo una transacción descuenta primero; la segunda reevalúa stock actualizado y se aprueba o rechaza.
+
+- **Implementado:** exclusión mutua por bloqueo pesimista en base de datos.
+
+### 3) ¿La búsqueda de catálogo necesita exclusión mutua?
+No, porque es operación de **solo lectura**. No modifica stock ni estado transaccional.
+
+- **Implementado:** búsqueda por título en `catalogo-service` sin sección crítica.
+
+### 4) ¿Qué operación del loan-service debe protegerse?
+La sección crítica es la transacción de préstamo físico donde se:
+1. Lee disponibilidad.
+2. Decide sede de origen.
+3. Descuenta stock.
+4. Persiste el registro de préstamo.
+
+- **Implementado:** `@Transactional` + `findByIdForUpdate(...)`.
+
+### 5) ¿Cómo se valida disponibilidad antes de crear el préstamo?
+Se obtiene el libro con bloqueo y se evalúa:
+1. `localStock` de la sede solicitante.
+2. `otherStock` de la otra sede.
+3. Si ambos son `0`, se rechaza.
+4. Si hay stock remoto, se crea préstamo inter-sede (`PENDIENTE_DE_ENVIO`) con autorización del líder.
+
+- **Implementado:** validación en `PrestamoService`.
+
+### 6) ¿Qué ocurre si dos solicitudes consultan disponibilidad al mismo tiempo?
+No hay lectura inconsistente de stock para préstamo porque ambas solicitudes entran al flujo protegido por bloqueo de fila. Una entra primero; la otra espera y luego opera sobre estado actualizado.
+
+- **Implementado:** serialización efectiva por bloqueo pesimista.
+
+### 7) ¿Cómo se actualiza el stock por sede de forma consistente?
+Dentro de una misma transacción:
+1. Se decrementa `copiasNorte` o `copiasSur` según reglas de negocio.
+2. Se guarda la entidad `Libro`.
+3. Se registra `Prestamo` con estado y metadatos de auditoría.
+
+- **Implementado:** actualización atómica de inventario + préstamo.
+
+### 8) ¿Qué servicio podría funcionar como coordinador?
+El coordinador de negocio inter-sede es el **líder electo de `prestamos-service`** (anillo lógico Chang-Roberts), no el gateway.
+
+- **Implementado:** autorización inter-sede por líder (`/api/eleccion/autorizar-prestamo-inter-sede`).
+- **Implementado:** robustez adicional con `liderazgoEpoca` para ignorar mensajes obsoletos.
+
+### 9) ¿Qué log debería registrarse en cada préstamo?
+Debe incluir, como mínimo:
+1. `id` de préstamo y `libroId`.
+2. sede solicitante y bibliotecario.
+3. estado final (`ENTREGADO`, `PENDIENTE_DE_ENVIO`, etc.).
+4. marca de tiempo corregida por Cristian (`fechaSolicitud`).
+5. telemetría de reloj (`relojDriftMs`, `relojRttMs`).
+6. líder que autorizó (`autorizadoPorLider`) en préstamos inter-sede.
+
+- **Implementado:** estos campos se persisten en `Prestamo`.
+
+### 10) ¿Cómo demostrar que no se prestó dos veces el mismo ejemplar?
+Con una prueba concurrente sobre un libro con stock inicial `1`:
+1. Lanzar dos solicitudes simultáneas de préstamo físico.
+2. Verificar: exactamente 1 éxito y 1 rechazo (o espera + rechazo según timing).
+3. Confirmar stock final en `0` y trazabilidad en historial.
+
+- **Implementado parcialmente:** la garantía existe por bloqueo pesimista y bitácora de préstamos.
+- **Recomendado para evidencia formal:** automatizar prueba de concurrencia (test de integración con múltiples hilos/clientes).
+
+---
+
 ## 👥 Equipo
 
 Proyecto desarrollado para el curso de **Sistemas Distribuidos** — Semana 13 y 14.

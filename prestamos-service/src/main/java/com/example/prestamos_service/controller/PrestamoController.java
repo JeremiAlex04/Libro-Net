@@ -2,6 +2,7 @@ package com.example.prestamos_service.controller;
 
 import com.example.prestamos_service.model.Prestamo;
 import com.example.prestamos_service.model.EstadoPrestamo;
+import com.example.prestamos_service.service.LiderEleccionService;
 import com.example.prestamos_service.service.PrestamoService;
 
 import org.slf4j.Logger;
@@ -20,12 +21,14 @@ public class PrestamoController {
     private static final Logger log = LoggerFactory.getLogger(PrestamoController.class);
 
     private final PrestamoService prestamoService;
+    private final LiderEleccionService liderEleccionService;
 
     @Value("${server.port}")
     private int serverPort;
 
-    public PrestamoController(PrestamoService prestamoService) {
+    public PrestamoController(PrestamoService prestamoService, LiderEleccionService liderEleccionService) {
         this.prestamoService = prestamoService;
+        this.liderEleccionService = liderEleccionService;
     }
 
     @PostMapping("/{libroId}")
@@ -35,10 +38,25 @@ public class PrestamoController {
             @RequestHeader(value = "X-Sede", required = false) String sede,
             @RequestHeader(value = "X-Bibliotecario", required = false) String bibliotecario) {
 
-        String sedeAuditoria = (sede != null && !sede.isBlank()) ? sede : "Sede no declarada";
-        String bibliotecarioAuditoria = (bibliotecario != null && !bibliotecario.isBlank())
-                ? bibliotecario
-                : "Anónimo";
+        if (liderEleccionService.isOffline()) {
+            return ResponseEntity.status(503).body("Nodo caido temporalmente (simulacion de falla). No se pueden procesar prestamos.");
+        }
+
+        if (sede == null || sede.isBlank()) {
+            return ResponseEntity.badRequest().body("Header X-Sede es requerido.");
+        }
+
+        String sedeNormalizada = sede.trim();
+        if (!"Sede Norte".equalsIgnoreCase(sedeNormalizada) && !"Sede Sur".equalsIgnoreCase(sedeNormalizada)) {
+            return ResponseEntity.badRequest().body("Header X-Sede invalido. Valores permitidos: Sede Norte o Sede Sur.");
+        }
+
+        if (bibliotecario == null || bibliotecario.isBlank()) {
+            return ResponseEntity.badRequest().body("Header X-Bibliotecario es requerido.");
+        }
+
+        String sedeAuditoria = sedeNormalizada;
+        String bibliotecarioAuditoria = bibliotecario.trim();
 
         log.info("Préstamo solicitado | libro={} | digital={} | bibliotecario={} | sede={} | nodo={}",
                 libroId, digital, bibliotecarioAuditoria, sedeAuditoria, serverPort);
@@ -50,6 +68,8 @@ public class PrestamoController {
                     + " | Bibliotecario: " + bibliotecarioAuditoria
                     + " | Sede: " + sedeAuditoria;
             return ResponseEntity.ok(respuesta);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("Solicitud invalida: " + e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.status(503).body("Fallo de concurrencia o servicio: " + e.getMessage());
         }

@@ -39,6 +39,9 @@ public class Prestamo {
     @Column(nullable = false)
     private EstadoPrestamo estado;
 
+    @Column(name = "autorizado_por_lider")
+    private Integer autorizadoPorLider;
+
     public Prestamo() {
     }
 
@@ -133,5 +136,13 @@ public class Prestamo {
 
     public void setEstado(EstadoPrestamo estado) {
         this.estado = estado;
+    }
+
+    public Integer getAutorizadoPorLider() {
+        return autorizadoPorLider;
+    }
+
+    public void setAutorizadoPorLider(Integer autorizadoPorLider) {
+        this.autorizadoPorLider = autorizadoPorLider;
     }
 }

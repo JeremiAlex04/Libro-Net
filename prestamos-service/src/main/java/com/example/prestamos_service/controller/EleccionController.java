@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
@@ -42,6 +43,7 @@ public class EleccionController {
         estado.put("liderId", eleccionService.getLiderId());
         estado.put("estadoNode", eleccionService.getEstadoNode());
         estado.put("isOffline", eleccionService.isOffline());
+        estado.put("liderazgoEpoca", eleccionService.getLiderazgoEpoca());
 
         List<Map<String, Object>> ringInfo = eleccionService.getActiveNodesInRing().stream()
                 .map(n -> {
@@ -58,16 +60,20 @@ public class EleccionController {
     }
 
     @GetMapping("/mensaje/election")
-    public ResponseEntity<String> receiveElection(@RequestParam int candidateId) {
+    public ResponseEntity<String> receiveElection(
+            @RequestParam int candidateId,
+            @RequestParam(name = "term", required = false, defaultValue = "0") long term) {
         checkOnlineStatus();
-        eleccionService.procesarMensajeEleccion(candidateId);
+        eleccionService.procesarMensajeEleccion(candidateId, term);
         return ResponseEntity.ok("Mensaje election procesado");
     }
 
     @GetMapping("/mensaje/coordinator")
-    public ResponseEntity<String> receiveCoordinator(@RequestParam int leaderId) {
+    public ResponseEntity<String> receiveCoordinator(
+            @RequestParam int leaderId,
+            @RequestParam(name = "term", required = false, defaultValue = "0") long term) {
         checkOnlineStatus();
-        eleccionService.procesarMensajeCoordinador(leaderId);
+        eleccionService.procesarMensajeCoordinador(leaderId, term);
         return ResponseEntity.ok("Mensaje coordinator procesado");
     }
 
@@ -82,6 +88,25 @@ public class EleccionController {
         checkOnlineStatus();
         eleccionService.iniciarEleccion();
         return ResponseEntity.ok("Elección forzada iniciada");
+    }
+
+    // Endpoint de autorización de préstamos inter-sede (solo el líder responde)
+    @GetMapping("/autorizar-prestamo-inter-sede")
+    public ResponseEntity<Map<String, Object>> autorizarPrestamoInterSede(
+            @RequestParam UUID libroId,
+            @RequestParam String sedeSolicitante) {
+        try {
+            checkOnlineStatus();
+            boolean autorizado = eleccionService.autorizarPrestamoInterSede(libroId, sedeSolicitante);
+            Map<String, Object> response = new HashMap<>();
+            response.put("autorizado", autorizado);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            Map<String, Object> response = new HashMap<>();
+            response.put("autorizado", false);
+            response.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(response);
+        }
     }
 
     // Excepción interna personalizada
