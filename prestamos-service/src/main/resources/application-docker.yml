@@ -10,9 +10,10 @@ spring:
 eureka:
   client:
     service-url:
-      defaultZone: http://${EUREKA_HOSTPORT:eureka:8761}/eureka/
+      defaultZone: ${EUREKA_BASE_URL:http://${EUREKA_HOSTPORT:eureka:8761}/eureka/}
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: false
+    hostname: ${SERVICE_HOST:prestamos}
 
 reloj:
   drift-ms: 5000

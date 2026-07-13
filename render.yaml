@@ -24,6 +24,11 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: docker
+      - key: SERVICE_HOST
+        fromService:
+          type: web
+          name: libronet-api-gateway
+          property: host
       - key: EUREKA_HOSTPORT
         fromService:
           type: web
@@ -66,6 +71,11 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: docker
+      - key: SERVICE_HOST
+        fromService:
+          type: web
+          name: libronet-catalogo
+          property: host
       - key: EUREKA_HOSTPORT
         fromService:
           type: web
@@ -94,6 +104,16 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: docker
+      - key: SERVICE_HOST
+        fromService:
+          type: web
+          name: libronet-prestamos-norte
+          property: host
+      - key: GATEWAY_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-api-gateway
+          property: hostport
       - key: EUREKA_HOSTPORT
         fromService:
           type: web
@@ -122,6 +142,16 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: docker,sede-sur
+      - key: SERVICE_HOST
+        fromService:
+          type: web
+          name: libronet-prestamos-sur
+          property: host
+      - key: GATEWAY_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-api-gateway
+          property: hostport
       - key: EUREKA_HOSTPORT
         fromService:
           type: web
@@ -150,6 +180,16 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: docker,sede-este
+      - key: SERVICE_HOST
+        fromService:
+          type: web
+          name: libronet-prestamos-este
+          property: host
+      - key: GATEWAY_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-api-gateway
+          property: hostport
       - key: EUREKA_HOSTPORT
         fromService:
           type: web

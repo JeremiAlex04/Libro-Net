@@ -33,6 +33,9 @@ public class PrestamoService {
     @Value("${reloj.drift-ms:0}")
     private long clockDriftMs;
 
+    @Value("${gateway.time-url}")
+    private String gatewayTimeUrl;
+
     public PrestamoService(LibroRepository libroRepository, PrestamoRepository prestamoRepository, RestTemplate restTemplate, LiderEleccionService liderEleccionService) {
         this.libroRepository = libroRepository;
         this.prestamoRepository = prestamoRepository;
@@ -114,7 +117,7 @@ public class PrestamoService {
         try {
             // Hacemos la consulta al Servidor de Tiempo en el API Gateway a través de Eureka
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = restTemplate.getForObject("http://libronet-api-gateway/api/time", Map.class);
+            Map<String, Object> response = restTemplate.getForObject(gatewayTimeUrl, Map.class);
             long t1 = System.currentTimeMillis() + clockDriftMs;
 
             if (response != null && response.containsKey("serverTimeMs")) {

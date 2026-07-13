@@ -34,7 +34,7 @@ spring:
         # 5. Ruta directa a Sede Norte (para simulación)
         - id: prestamos-norte-direct
           order: 0
-          uri: http://${PRESTAMOS_NORTE_HOSTPORT:localhost:8081}
+          uri: ${PRESTAMOS_NORTE_URL:http://${PRESTAMOS_NORTE_HOSTPORT:localhost:8081}}
           predicates:
             - Path=/api/eleccion/norte/**
           filters:
@@ -46,7 +46,7 @@ spring:
         # 6. Ruta directa a Sede Sur (para simulación)
         - id: prestamos-sur-direct
           order: 1
-          uri: http://${PRESTAMOS_SUR_HOSTPORT:localhost:8083}
+          uri: ${PRESTAMOS_SUR_URL:http://${PRESTAMOS_SUR_HOSTPORT:localhost:8083}}
           predicates:
             - Path=/api/eleccion/sur/**
           filters:
@@ -58,7 +58,7 @@ spring:
         # 7. Ruta para el Servicio de Elección de Líder (balanceado)
         - id: prestamos-este-direct
           order: 2
-          uri: http://${PRESTAMOS_ESTE_HOSTPORT:localhost:8084}
+          uri: ${PRESTAMOS_ESTE_URL:http://${PRESTAMOS_ESTE_HOSTPORT:localhost:8084}}
           predicates:
             - Path=/api/eleccion/este/**
           filters:
@@ -92,6 +92,8 @@ spring:
 eureka:
   client:
     service-url:
-      defaultZone: http://${EUREKA_HOSTPORT:localhost:8761}/eureka/
+      defaultZone: ${EUREKA_BASE_URL:http://${EUREKA_HOSTPORT:localhost:8761}/eureka/}
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: false
+    hostname: ${SERVICE_HOST:localhost}
+    instance-id: ${spring.application.name}:${SERVICE_HOST:localhost}:${server.port}
