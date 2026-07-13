@@ -60,7 +60,6 @@ services:
     runtime: docker
     name: libronet-catalogo
     plan: free
-    numInstances: 2
     rootDir: catalogo-service
     dockerfilePath: ./catalogo-service/Dockerfile
     dockerContext: ./catalogo-service
