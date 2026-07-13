@@ -53,6 +53,22 @@ services:
     networks:
       - libronet
 
+  catalogo-2:
+    build: ./catalogo-service
+    container_name: libronet-catalogo-2
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      TZ: America/Lima
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka:
+        condition: service_healthy
+    networks:
+      - libronet
+
   prestamos-norte:
     build: ./prestamos-service
     container_name: libronet-prestamos-norte
@@ -85,6 +101,22 @@ services:
     networks:
       - libronet
 
+  prestamos-este:
+    build: ./prestamos-service
+    container_name: libronet-prestamos-este
+    environment:
+      SPRING_PROFILES_ACTIVE: docker,sede-este
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      TZ: America/Lima
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eureka:
+        condition: service_healthy
+    networks:
+      - libronet
+
   gateway:
     build: ./api-gateway
     container_name: libronet-gateway
@@ -98,9 +130,13 @@ services:
         condition: service_healthy
       catalogo:
         condition: service_started
+      catalogo-2:
+        condition: service_started
       prestamos-norte:
         condition: service_started
       prestamos-sur:
+        condition: service_started
+      prestamos-este:
         condition: service_started
     networks:
       - libronet

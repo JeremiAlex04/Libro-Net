@@ -1,0 +1,176 @@
+services:
+  - type: web
+    runtime: docker
+    name: libronet-frontend
+    plan: free
+    rootDir: _frontend-libronet
+    dockerfilePath: ./_frontend-libronet/Dockerfile
+    dockerContext: ./_frontend-libronet
+    envVars:
+      - key: GATEWAY_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-api-gateway
+          property: hostport
+
+  - type: web
+    runtime: docker
+    name: libronet-api-gateway
+    plan: free
+    rootDir: api-gateway
+    dockerfilePath: ./api-gateway/Dockerfile
+    dockerContext: ./api-gateway
+    healthCheckPath: /api/time
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker
+      - key: EUREKA_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-eureka
+          property: hostport
+      - key: PRESTAMOS_NORTE_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-prestamos-norte
+          property: hostport
+      - key: PRESTAMOS_SUR_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-prestamos-sur
+          property: hostport
+      - key: PRESTAMOS_ESTE_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-prestamos-este
+          property: hostport
+
+  - type: web
+    runtime: docker
+    name: libronet-eureka
+    plan: free
+    rootDir: red
+    dockerfilePath: ./red/Dockerfile
+    dockerContext: ./red
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker
+
+  - type: web
+    runtime: docker
+    name: libronet-catalogo
+    plan: free
+    numInstances: 2
+    rootDir: catalogo-service
+    dockerfilePath: ./catalogo-service/Dockerfile
+    dockerContext: ./catalogo-service
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker
+      - key: EUREKA_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-eureka
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: libronet-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: libronet-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: libronet-db
+          property: password
+
+  - type: web
+    runtime: docker
+    name: libronet-prestamos-norte
+    plan: free
+    rootDir: prestamos-service
+    dockerfilePath: ./prestamos-service/Dockerfile
+    dockerContext: ./prestamos-service
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker
+      - key: EUREKA_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-eureka
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: libronet-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: libronet-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: libronet-db
+          property: password
+
+  - type: web
+    runtime: docker
+    name: libronet-prestamos-sur
+    plan: free
+    rootDir: prestamos-service
+    dockerfilePath: ./prestamos-service/Dockerfile
+    dockerContext: ./prestamos-service
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker,sede-sur
+      - key: EUREKA_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-eureka
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: libronet-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: libronet-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: libronet-db
+          property: password
+
+  - type: web
+    runtime: docker
+    name: libronet-prestamos-este
+    plan: free
+    rootDir: prestamos-service
+    dockerfilePath: ./prestamos-service/Dockerfile
+    dockerContext: ./prestamos-service
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: docker,sede-este
+      - key: EUREKA_HOSTPORT
+        fromService:
+          type: web
+          name: libronet-eureka
+          property: hostport
+      - key: DATABASE_URL
+        fromDatabase:
+          name: libronet-db
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: libronet-db
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: libronet-db
+          property: password
+
+databases:
+  - name: libronet-db
+    plan: free
+    databaseName: biblioteca_db
+    ipAllowList: []

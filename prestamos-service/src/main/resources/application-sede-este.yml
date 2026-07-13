@@ -1,16 +1,16 @@
 server:
-  port: ${PORT:8083}
+  port: ${PORT:8084}
 
 eureka:
   instance:
     instance-id: ${spring.application.name}:${server.port}
     metadata-map:
-      sede: Sede Sur
-      nodeId: 2
+      sede: Sede Este
+      nodeId: 3
 
 eleccion:
-  node-id: 2
-  node-name: Sede Sur
+  node-id: 3
+  node-name: Sede Este
 
 reloj:
-  drift-ms: -15000
+  drift-ms: 12000

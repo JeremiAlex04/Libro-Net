@@ -25,13 +25,12 @@ function App() {
   // ==========================================
   const [prestamos, setPrestamos] = useState([]);
   const [activeTab, setActiveTab] = useState('logistica'); // 'logistica' o 'historial'
-  const [expandedLoans, setExpandedLoans] = useState({});
 
-  const toggleDetails = (id) => {
-    setExpandedLoans((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
+  const nombreSede = (sede) => {
+    if (sede === 'norte') return 'Sede Norte';
+    if (sede === 'sur') return 'Sede Sur';
+    if (sede === 'este') return 'Sede Este';
+    return 'Sede';
   };
 
   // ==========================================
@@ -39,6 +38,10 @@ function App() {
   // ==========================================
   const [eleccionNorte, setEleccionNorte] = useState(null);
   const [eleccionSur, setEleccionSur] = useState(null);
+  const [eleccionEste, setEleccionEste] = useState(null);
+  const [eventosNorte, setEventosNorte] = useState([]);
+  const [eventosSur, setEventosSur] = useState([]);
+  const [eventosEste, setEventosEste] = useState([]);
 
   const obtenerEstadoEleccion = async () => {
     try {
@@ -64,6 +67,41 @@ function App() {
     } catch (e) {
       setEleccionSur(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 2, nodeName: 'Sede Sur', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
     }
+
+    try {
+      const res = await fetch('/api/eleccion/este/estado');
+      if (res.ok) {
+        const data = await res.json();
+        setEleccionEste(data);
+      } else {
+        setEleccionEste(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 3, nodeName: 'Sede Este', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+      }
+    } catch (e) {
+      setEleccionEste(prev => prev ? { ...prev, isOffline: true, estadoNode: 'DESCONECTADO' } : { nodeId: 3, nodeName: 'Sede Este', isOffline: true, estadoNode: 'DESCONECTADO', liderId: -1, anillo: [] });
+    }
+  };
+
+  const obtenerEventosEleccion = async () => {
+    const cargarEventos = async (ruta, setter) => {
+      try {
+        const res = await fetch(ruta);
+        if (!res.ok) {
+          setter([]);
+          return;
+        }
+        const data = await res.json();
+        const ultimos = Array.isArray(data) ? data.slice(-15).reverse() : [];
+        setter(ultimos);
+      } catch (_) {
+        setter([]);
+      }
+    };
+
+    await Promise.all([
+      cargarEventos('/api/eleccion/norte/eventos', setEventosNorte),
+      cargarEventos('/api/eleccion/sur/eventos', setEventosSur),
+      cargarEventos('/api/eleccion/este/eventos', setEventosEste),
+    ]);
   };
 
   const cambiarEstadoCaida = async (sede, offline) => {
@@ -71,8 +109,12 @@ function App() {
       const endpoint = `/api/eleccion/${sede}/simular-caida?offline=${offline}`;
       const res = await fetch(endpoint, { method: 'POST' });
       if (res.ok) {
-        mostrarAlerta('success', `${sede === 'norte' ? 'Sede Norte' : 'Sede Sur'} configurada como ${offline ? 'CAÍDA' : 'ACTIVA'}`);
+        if (!offline) {
+          await fetch(`/api/eleccion/${sede}/resincronizar`, { method: 'POST' });
+        }
+        mostrarAlerta('success', `${nombreSede(sede)} configurada como ${offline ? 'CAÍDA' : 'ACTIVA'}`);
         obtenerEstadoEleccion();
+        obtenerEventosEleccion();
       } else {
         mostrarAlerta('danger', 'No se pudo cambiar el estado de caída.');
       }
@@ -86,8 +128,9 @@ function App() {
       const endpoint = `/api/eleccion/${sede}/forzar-eleccion`;
       const res = await fetch(endpoint, { method: 'POST' });
       if (res.ok) {
-        mostrarAlerta('success', `Elección forzada desde ${sede === 'norte' ? 'Sede Norte' : 'Sede Sur'}`);
+        mostrarAlerta('success', `Elección forzada desde ${nombreSede(sede)}`);
         obtenerEstadoEleccion();
+        obtenerEventosEleccion();
       } else {
         mostrarAlerta('danger', 'No se pudo iniciar la elección.');
       }
@@ -103,6 +146,7 @@ function App() {
       obtenerPrestamos(false);
       if (modoAuditoria) {
         obtenerEstadoEleccion();
+        obtenerEventosEleccion();
       }
     }
   }, [usuarioActivo, modoAuditoria]);
@@ -118,6 +162,7 @@ function App() {
       obtenerPrestamos(true);
       if (modoAuditoria) {
         obtenerEstadoEleccion();
+        obtenerEventosEleccion();
       }
     }, 5000);
 
@@ -474,6 +519,58 @@ function App() {
                   </div>
                 </div>
               </div>
+
+              {/* Sede Este Node Card */}
+              <div className="col-md-6 col-lg-4">
+                <div className={`card h-100 p-3 border-light-subtle shadow-xs bg-light position-relative ${eleccionEste?.isOffline ? 'opacity-75' : ''}`}>
+                  {eleccionEste?.liderId === 3 && !eleccionEste?.isOffline && (
+                    <span className="position-absolute top-0 end-0 translate-middle-y badge bg-success-subtle text-success border border-success-subtle px-3 py-1.5 rounded-pill me-3 fs-7 fw-bold">
+                      👑 LÍDER ACTUAL
+                    </span>
+                  )}
+                  <div className="d-flex align-items-center gap-3 mb-3">
+                    <div className={`rounded-circle p-2.5 d-flex align-items-center justify-content-center ${eleccionEste?.isOffline ? 'bg-danger-subtle text-danger' : 'bg-primary-subtle text-primary'}`} style={{ width: '48px', height: '48px' }}>
+                      <i className={`bi ${eleccionEste?.isOffline ? 'bi-cpu-fill' : 'bi-pc-display'} fs-4`}></i>
+                    </div>
+                    <div>
+                      <h6 className="fw-bold mb-0 text-dark">Sede Este (ID: 3)</h6>
+                      <span className="small text-secondary">Puerto: 8084 | Nodo dinámico</span>
+                    </div>
+                  </div>
+
+                  <div className="mb-3">
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Estado del Nodo:</span>
+                      <span className={`fw-bold ${eleccionEste?.isOffline ? 'text-danger' : (eleccionEste?.estadoNode === 'ELECTION' ? 'text-warning' : 'text-success')}`}>
+                        {eleccionEste?.isOffline ? '🔴 OFFLINE' : `🟢 ONLINE (${eleccionEste?.estadoNode})`}
+                      </span>
+                    </div>
+                    <div className="d-flex justify-content-between border-bottom py-1 text-secondary small">
+                      <span>Líder Conocido:</span>
+                      <span className="fw-bold text-dark">
+                        {eleccionEste?.isOffline ? 'Ninguno' : (eleccionEste?.liderId === -1 ? 'Eligiendo...' : `Nodo ${eleccionEste?.liderId}`)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="d-flex gap-2 mt-auto">
+                    {eleccionEste?.isOffline ? (
+                      <button className="btn btn-sm btn-success w-100 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('este', false)}>
+                        <i className="bi bi-activity me-1"></i>Restaurar Nodo
+                      </button>
+                    ) : (
+                      <>
+                        <button className="btn btn-sm btn-outline-danger w-50 py-1.5 rounded-pill fw-semibold" onClick={() => cambiarEstadoCaida('este', true)}>
+                          <i className="bi bi-power me-1"></i>Simular Caída
+                        </button>
+                        <button className="btn btn-sm btn-outline-primary w-50 py-1.5 rounded-pill fw-semibold" onClick={() => forzarEleccionSede('este')} disabled={eleccionEste?.estadoNode === 'ELECTION'}>
+                          <i className="bi bi-arrow-repeat me-1"></i>Elección
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* Visual Ring Representation */}
@@ -491,6 +588,60 @@ function App() {
                 </div>
                 <div className="text-secondary fs-4">
                   <i className="bi bi-arrow-left-circle-fill"></i>
+                </div>
+              </div>
+            </div>
+
+            <div className="row g-3 mt-1">
+              <div className="col-lg-4">
+                <div className="border rounded-3 p-3 bg-light h-100">
+                  <h6 className="fw-bold mb-2">Eventos Sede Norte</h6>
+                  {eventosNorte.length === 0 ? (
+                    <p className="small text-secondary mb-0">Sin eventos recientes.</p>
+                  ) : (
+                    <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                      {eventosNorte.map((ev, idx) => (
+                        <div key={`n-${idx}`} className="small border-bottom border-light-subtle py-1">
+                          <div className="fw-semibold text-dark">{ev.nivel} · {new Date(ev.timestamp).toLocaleTimeString()}</div>
+                          <div className="text-secondary">{ev.mensaje}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="col-lg-4">
+                <div className="border rounded-3 p-3 bg-light h-100">
+                  <h6 className="fw-bold mb-2">Eventos Sede Sur</h6>
+                  {eventosSur.length === 0 ? (
+                    <p className="small text-secondary mb-0">Sin eventos recientes.</p>
+                  ) : (
+                    <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                      {eventosSur.map((ev, idx) => (
+                        <div key={`s-${idx}`} className="small border-bottom border-light-subtle py-1">
+                          <div className="fw-semibold text-dark">{ev.nivel} · {new Date(ev.timestamp).toLocaleTimeString()}</div>
+                          <div className="text-secondary">{ev.mensaje}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="col-lg-4">
+                <div className="border rounded-3 p-3 bg-light h-100">
+                  <h6 className="fw-bold mb-2">Eventos Sede Este</h6>
+                  {eventosEste.length === 0 ? (
+                    <p className="small text-secondary mb-0">Sin eventos recientes.</p>
+                  ) : (
+                    <div style={{ maxHeight: '220px', overflowY: 'auto' }}>
+                      {eventosEste.map((ev, idx) => (
+                        <div key={`e-${idx}`} className="small border-bottom border-light-subtle py-1">
+                          <div className="fw-semibold text-dark">{ev.nivel} · {new Date(ev.timestamp).toLocaleTimeString()}</div>
+                          <div className="text-secondary">{ev.mensaje}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -645,26 +796,11 @@ function App() {
                             
                             {modoAuditoria && (
                               <div className="mt-1">
-                                <button 
-                                  type="button"
-                                  className="btn btn-xs btn-link text-info p-0 font-monospace text-decoration-none"
-                                  style={{ fontSize: '0.72rem' }}
-                                  onClick={() => toggleDetails(p.id)}
-                                >
-                                  {expandedLoans[p.id] ? '[- Ocultar Sync]' : '[+ Ver Sync]'}
-                                </button>
-                                {expandedLoans[p.id] && (
-                                  <div className="card p-2 mt-1 bg-light border-light-subtle rounded text-start font-monospace text-dark position-absolute shadow-sm" style={{ fontSize: '0.72rem', minWidth: '220px', zIndex: 10 }}>
-                                    <div className="text-success fw-bold">Cristian Corregido:</div>
-                                    <div className="ps-2">{new Date(p.fechaSolicitud).toLocaleString()}</div>
-                                    <div className="text-warning fw-bold mt-1">Sede Local:</div>
-                                    <div className="ps-2">{new Date(p.fechaLocalSede).toLocaleString()}</div>
-                                    <div className="mt-1">
-                                      <strong>Drift:</strong> {p.relojDriftMs >= 0 ? `+${p.relojDriftMs}ms` : `${p.relojDriftMs}ms`}
-                                    </div>
-                                    <div><strong>RTT:</strong> {p.relojRttMs}ms</div>
-                                  </div>
-                                )}
+                                <div className="font-monospace text-info-emphasis" style={{ fontSize: '0.72rem' }}>
+                                  <div>Corregido: {new Date(p.fechaSolicitud).toLocaleString()}</div>
+                                  <div>Drift: {p.relojDriftMs >= 0 ? `+${p.relojDriftMs}` : `${p.relojDriftMs}`} ms</div>
+                                  <div>RTT: {p.relojRttMs} ms</div>
+                                </div>
                               </div>
                             )}
                           </td>
@@ -714,26 +850,11 @@ function App() {
                             
                             {modoAuditoria && (
                               <div className="mt-1">
-                                <button 
-                                  type="button"
-                                  className="btn btn-xs btn-link text-info p-0 font-monospace text-decoration-none"
-                                  style={{ fontSize: '0.72rem' }}
-                                  onClick={() => toggleDetails(p.id)}
-                                >
-                                  {expandedLoans[p.id] ? '[- Ocultar Sync]' : '[+ Ver Sync]'}
-                                </button>
-                                {expandedLoans[p.id] && (
-                                  <div className="card p-2 mt-1 bg-light border-light-subtle rounded text-start font-monospace text-dark position-absolute shadow-sm" style={{ fontSize: '0.72rem', minWidth: '220px', zIndex: 10 }}>
-                                    <div className="text-success fw-bold">Cristian Corregido:</div>
-                                    <div className="ps-2">{new Date(p.fechaSolicitud).toLocaleString()}</div>
-                                    <div className="text-warning fw-bold mt-1">Sede Local:</div>
-                                    <div className="ps-2">{new Date(p.fechaLocalSede).toLocaleString()}</div>
-                                    <div className="mt-1">
-                                      <strong>Drift:</strong> {p.relojDriftMs >= 0 ? `+${p.relojDriftMs}ms` : `${p.relojDriftMs}ms`}
-                                    </div>
-                                    <div><strong>RTT:</strong> {p.relojRttMs}ms</div>
-                                  </div>
-                                )}
+                                <div className="font-monospace text-info-emphasis" style={{ fontSize: '0.72rem' }}>
+                                  <div>Corregido: {new Date(p.fechaSolicitud).toLocaleString()}</div>
+                                  <div>Drift: {p.relojDriftMs >= 0 ? `+${p.relojDriftMs}` : `${p.relojDriftMs}`} ms</div>
+                                  <div>RTT: {p.relojRttMs} ms</div>
+                                </div>
                               </div>
                             )}
                           </td>

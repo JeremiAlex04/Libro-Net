@@ -1,13 +1,16 @@
 spring:
   datasource:
-    url: jdbc:postgresql://postgres:5432/biblioteca_db
-    username: ${POSTGRES_USER:postgres}
-    password: ${POSTGRES_PASSWORD}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/biblioteca_db}
+    username: ${SPRING_DATASOURCE_USERNAME:${POSTGRES_USER:postgres}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${POSTGRES_PASSWORD:}}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
 
 eureka:
   client:
     service-url:
-      defaultZone: http://eureka:8761/eureka/
+      defaultZone: http://${EUREKA_HOSTPORT:eureka:8761}/eureka/
   instance:
     prefer-ip-address: true
 

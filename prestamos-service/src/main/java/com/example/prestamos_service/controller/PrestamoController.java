@@ -12,6 +12,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -31,6 +32,10 @@ public class PrestamoController {
         this.liderEleccionService = liderEleccionService;
     }
 
+    private String instanceLabel() {
+        return "prestamos-node:" + serverPort;
+    }
+
     @PostMapping("/{libroId}")
     public ResponseEntity<String> solicitarPrestamo(
             @PathVariable UUID libroId,
@@ -39,20 +44,34 @@ public class PrestamoController {
             @RequestHeader(value = "X-Bibliotecario", required = false) String bibliotecario) {
 
         if (liderEleccionService.isOffline()) {
-            return ResponseEntity.status(503).body("Nodo caido temporalmente (simulacion de falla). No se pueden procesar prestamos.");
+            return ResponseEntity.status(503)
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Nodo caido temporalmente (simulacion de falla). No se pueden procesar prestamos.");
+        }
+
+        if (!liderEleccionService.isAcceptingRequests()) {
+            return ResponseEntity.status(503)
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Nodo en resincronizacion. Reintente en unos segundos.");
         }
 
         if (sede == null || sede.isBlank()) {
-            return ResponseEntity.badRequest().body("Header X-Sede es requerido.");
+            return ResponseEntity.badRequest()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Header X-Sede es requerido.");
         }
 
         String sedeNormalizada = sede.trim();
         if (!"Sede Norte".equalsIgnoreCase(sedeNormalizada) && !"Sede Sur".equalsIgnoreCase(sedeNormalizada)) {
-            return ResponseEntity.badRequest().body("Header X-Sede invalido. Valores permitidos: Sede Norte o Sede Sur.");
+            return ResponseEntity.badRequest()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Header X-Sede invalido. Valores permitidos: Sede Norte o Sede Sur.");
         }
 
         if (bibliotecario == null || bibliotecario.isBlank()) {
-            return ResponseEntity.badRequest().body("Header X-Bibliotecario es requerido.");
+            return ResponseEntity.badRequest()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Header X-Bibliotecario es requerido.");
         }
 
         String sedeAuditoria = sedeNormalizada;
@@ -67,17 +86,32 @@ public class PrestamoController {
                     + " | Atendido en nodo " + serverPort
                     + " | Bibliotecario: " + bibliotecarioAuditoria
                     + " | Sede: " + sedeAuditoria;
-            return ResponseEntity.ok(respuesta);
+            return ResponseEntity.ok()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body(respuesta);
         } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body("Solicitud invalida: " + e.getMessage());
+            return ResponseEntity.badRequest()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Solicitud invalida: " + e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.status(503).body("Fallo de concurrencia o servicio: " + e.getMessage());
+            return ResponseEntity.status(503)
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body("Fallo de concurrencia o servicio: " + e.getMessage());
         }
     }
 
     @GetMapping
     public ResponseEntity<List<Prestamo>> obtenerTodosLosPrestamos() {
-        return ResponseEntity.ok(prestamoService.obtenerTodos());
+        return ResponseEntity.ok()
+                .header("X-LibroNet-Instance", instanceLabel())
+                .body(prestamoService.obtenerTodos());
+    }
+
+    @GetMapping("/instancia")
+    public ResponseEntity<Map<String, String>> obtenerInstancia() {
+        return ResponseEntity.ok()
+                .header("X-LibroNet-Instance", instanceLabel())
+                .body(Map.of("service", "libronet-prestamos", "instance", instanceLabel()));
     }
 
     @PutMapping("/{id}/estado")
@@ -87,9 +121,13 @@ public class PrestamoController {
         log.info("Actualización de estado de logística | ID={} | Nuevo Estado={}", id, estado);
         try {
             Prestamo prestamo = prestamoService.actualizarEstado(id, estado);
-            return ResponseEntity.ok(prestamo);
+            return ResponseEntity.ok()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .body(prestamo);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().build();
+            return ResponseEntity.badRequest()
+                    .header("X-LibroNet-Instance", instanceLabel())
+                    .build();
         }
     }
 }

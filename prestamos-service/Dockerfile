@@ -8,5 +8,7 @@ FROM eclipse-temurin:17-jre-alpine
 RUN apk add --no-cache curl
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
+COPY render-entrypoint.sh render-entrypoint.sh
+RUN chmod +x render-entrypoint.sh
 EXPOSE 8081 8083
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["./render-entrypoint.sh"]

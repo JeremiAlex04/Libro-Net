@@ -28,6 +28,13 @@ public class EleccionController {
         }
     }
 
+    private void checkReadyForBusiness() {
+        checkOnlineStatus();
+        if (!eleccionService.isAcceptingRequests()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Nodo en resincronización; aún no acepta peticiones");
+        }
+    }
+
     @GetMapping("/ping")
     public String ping() {
         checkOnlineStatus();
@@ -44,6 +51,8 @@ public class EleccionController {
         estado.put("estadoNode", eleccionService.getEstadoNode());
         estado.put("isOffline", eleccionService.isOffline());
         estado.put("liderazgoEpoca", eleccionService.getLiderazgoEpoca());
+        estado.put("acceptingRequests", eleccionService.isAcceptingRequests());
+        estado.put("lastClockSyncMs", eleccionService.getLastClockSyncMs());
 
         List<Map<String, Object>> ringInfo = eleccionService.getActiveNodesInRing().stream()
                 .map(n -> {
@@ -90,13 +99,29 @@ public class EleccionController {
         return ResponseEntity.ok("Elección forzada iniciada");
     }
 
+    @PostMapping("/resincronizar")
+    public ResponseEntity<String> resincronizarNodo() {
+        checkOnlineStatus();
+        boolean ok = eleccionService.resincronizarNodo();
+        if (ok) {
+            return ResponseEntity.ok("Resincronizacion completada. Nodo habilitado para aceptar peticiones.");
+        }
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body("Resincronizacion incompleta. Nodo aun no acepta peticiones.");
+    }
+
+    @GetMapping("/eventos")
+    public ResponseEntity<List<LiderEleccionService.EventoEleccion>> eventos() {
+        return ResponseEntity.ok(eleccionService.getEventos());
+    }
+
     // Endpoint de autorización de préstamos inter-sede (solo el líder responde)
     @GetMapping("/autorizar-prestamo-inter-sede")
     public ResponseEntity<Map<String, Object>> autorizarPrestamoInterSede(
             @RequestParam UUID libroId,
             @RequestParam String sedeSolicitante) {
         try {
-            checkOnlineStatus();
+            checkReadyForBusiness();
             boolean autorizado = eleccionService.autorizarPrestamoInterSede(libroId, sedeSolicitante);
             Map<String, Object> response = new HashMap<>();
             response.put("autorizado", autorizado);
